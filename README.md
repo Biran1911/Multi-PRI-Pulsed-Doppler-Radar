@@ -227,4 +227,5 @@ Final estimated true range and velocity of each target, including their PRI-to-r
       PRI: 40.0 µs folded 5.50 km -> R_true: 11.505 km
       PRI: 34.5 µs folded 1.15 km -> R_true: 11.497 km
       PRI: 31.0 µs folded 2.20 km -> R_true: 11.498 km
+<img width="1920" height="983" alt="image" src="https://github.com/user-attachments/assets/f3049230-aa06-468c-983a-f7734fa2c40e" />
 
