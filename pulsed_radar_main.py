@@ -17,28 +17,57 @@ def define_targets():
         (35000, -25, 100),
     ]
 
-# --- Generate Barker-13 baseband pulse ---
-def generate_barker_pulse(fs,waveform, barker_bin):
-    match waveform:
+# --- Generate baseband pulse ---
+def generate_pulse(fs, waveform, nbin, f_start, f_end):
+    """
+    Generate Barker or LFM pulse waveform.
+
+    Parameters
+    ----------
+    fs : float
+        Sampling frequency [Hz]
+    waveform : str
+        Waveform type: 'barker_13', 'lfm', etc.
+    nbin : float
+        Range bin or pulse length parameter (depends on design)
+    f_start : float, optional
+        Start frequency for LFM [Hz]
+    f_end : float, optional
+        End frequency for LFM [Hz]
+    pulse_duration : float, optional
+        Pulse duration in seconds for LFM. If None, derived from barker_bin/fs.
+    """
+    # --- Handle Barker coded waveforms ---
+    match waveform.lower():
         case 'barker_2':
-            waveform = np.array([+1, -1])
+            code = np.array([+1, -1])
         case 'barker_3':
-            waveform = np.array([+1, +1, -1])
+            code = np.array([+1, +1, -1])
         case 'barker_4':
-            waveform = np.array([+1, +1, -1, +1])
+            code = np.array([+1, +1, -1, +1])
         case 'barker_5':
-            waveform = np.array([+1, +1, +1, -1, +1])
+            code = np.array([+1, +1, +1, -1, +1])
         case 'barker_7':
-            waveform = np.array([+1, +1, +1, -1, -1, +1, -1])
+            code = np.array([+1, +1, +1, -1, -1, +1, -1])
         case 'barker_11':
-            waveform = np.array([+1, +1, +1, -1, -1, -1, +1, -1, -1, +1, -1])
+            code = np.array([+1, +1, +1, -1, -1, -1, +1, -1, -1, +1, -1])
         case 'barker_13':
-            waveform = np.array([+1, +1, +1, -1, -1, -1, +1, -1, -1, -1, +1, -1, +1])
+            code = np.array([+1, +1, +1, -1, -1, -1, +1, -1, -1, -1, +1, -1, +1])
+        case 'lfm':
+            # --- Generate LFM waveform ---
+            pulse_duration = nbin / fs  # fallback based on same logic
+            t = np.arange(0, pulse_duration, 1/fs)
+            k = (f_end - f_start) / pulse_duration  # chirp rate
+            phase = 2 * np.pi * (f_start * t + 0.5 * k * t**2)
+            pulse_complex = np.exp(1j * phase)
+            return pulse_complex
         case _:
-            raise ValueError(f"Unsupported Waveform: {waveform}")
-    chip_duration = (barker_bin / fs) / len(waveform)
+            raise ValueError(f"Unsupported waveform: {waveform}")
+
+    # --- Generate Barker pulse samples ---
+    chip_duration = (nbin / fs) / len(code)
     chip_samples = int(fs * chip_duration)
-    pulse_real = np.repeat(waveform, chip_samples)
+    pulse_real = np.repeat(code, chip_samples)
     t_pulse = np.arange(len(pulse_real)) / fs
     pulse_complex = pulse_real * np.exp(1j * 2 * np.pi * 1e6 * t_pulse)
     return pulse_complex
@@ -97,13 +126,12 @@ def simulate_rx_waveform(tx_waveform, pulse, pulse_starts, pri_samples, PRIs, fs
     return rx_waveform, pulse_windows
 
 # --- Build data cube ---
-def build_data_cube(rx_waveform, pulse_starts, pri_samples):
-    max_samples = 1024;
-    data_cube = np.zeros((len(pulse_starts), max_samples), dtype=complex)
+def build_data_cube(rx_waveform, pulse_starts, pri_samples, Nrange):
+    data_cube = np.zeros((len(pulse_starts), Nrange), dtype=complex)
     for i, start in enumerate(pulse_starts):
         end = start + pri_samples[i]
         data_cube[i, :pri_samples[i]] = rx_waveform[start:end]
-    return data_cube, max_samples
+    return data_cube, Nrange
 
 # --- Process range-Doppler per PRI ---
 def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, max_samples):
@@ -407,22 +435,28 @@ def unfold_multiple_detections(detections, max_zones, fc, tol_m=0.05):
 
 # --- Main ---
 def main():
-    # Params
+    # Wveform Params
     PRI_set = [44.5, 40, 38, 34.5, 31]  # µs
-    Npulse = 2048 # number of pulses
-    waveform = 'barker_13' # barker waveform
-    barker_bin = 19 # barker bins
+    Npulse = 2048 # number of pulses (slow time)
+    Nrange = 1024 # range samples (fast time)
+    waveform = 'barker_13' # waveform type
+    f_start = -10e6 # lfm start frequency
+    f_end = 10e6 # lfm end frequency
+    n_bin = 19 # number of bins
     fc = 34.5e9
     fs = 20e6
+    
+    # Detection and Association Params
     DR = 50  # dynamic range in dB
     max_zones = 8
     TH1 = 13 # pre detection threshold   
-        
+    TH2 = 30 # CFAR threshold    
+    
     # Targets
     targets = define_targets()
     
     # Pulse Generator
-    pulse = generate_barker_pulse(fs,waveform, barker_bin)
+    pulse = generate_pulse(fs, waveform, n_bin, f_start, f_end)
     
     RD_maps = {}
     
@@ -436,7 +470,7 @@ def main():
         rx_waveform, pulse_windows = simulate_rx_waveform(tx_waveform, pulse, pulse_starts, pri_samples, PRIs, fs, fc, targets)
         
         # Data cube
-        data_cube, max_samples = build_data_cube(rx_waveform, pulse_starts, pri_samples)
+        data_cube, max_samples = build_data_cube(rx_waveform, pulse_starts, pri_samples, Nrange)
 
         # PRI grouping
         pri_groups = defaultdict(list)
@@ -451,7 +485,7 @@ def main():
     candidates = pre_detection(RD_maps, pri_groups, fs, c, fc, TH1)
     print("\n--- Detected Pre Plots ---")
     print(tabulate(candidates, headers="keys", tablefmt="pretty", floatfmt=".2f")) 
-    detections = cfar_detection(RD_maps, candidates, fs, c, fc, Tr=10, Td=12, Gr=6, Gd=3, offset_dB=30)
+    detections = cfar_detection(RD_maps, candidates, fs, c, fc, Tr=10, Td=12, Gr=6, Gd=3, offset_dB=TH2)
     print("\n--- Detected Plots ---")
     print(tabulate(detections, headers="keys", tablefmt="pretty", floatfmt=".2f"))   
     
