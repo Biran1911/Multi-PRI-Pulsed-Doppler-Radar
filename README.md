@@ -1,13 +1,13 @@
 🧠 Overview:
 
-This Python script simulates a multi-PRI pulsed radar system using Barker-coded waveforms, generates synthetic echoes from defined targets, processes the data into Range–Doppler maps, performs detection            (CFAR), and then associates folded detections across different PRIs to estimate the true target range and velocity.
+This Python script simulates a multi-PRI pulsed radar system using Barker-coded or LFM waveforms, generates synthetic echoes from defined targets, processes the data into Range–Doppler maps, performs detection            (CFAR), and then associates folded detections across different PRIs to estimate the true target range and velocity.
 
 ⚙️ Main Components:
 1. Target and Waveform Definition
 
     define_targets() – defines target range (m), velocity (m/s), and RCS.
 
-    generate_barker_pulse() – creates a complex baseband Barker code pulse at 1 MHz subcarrier frequency, sampled at fs.
+    generate_pulse() – creates a complex baseband Barker code pulse or LFM at subcarrier frequency, sampled at fs.
 
 2. Transmission and Reception Simulation
 
