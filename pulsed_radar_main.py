@@ -15,6 +15,7 @@ def define_targets():
         (2000, 0, 100),
         (11500, 30, 100),
         (35000, -25, 100),
+        (40000, 10, 100),
     ]
 
 # --- Generate baseband pulse ---
@@ -111,9 +112,9 @@ def simulate_rx_waveform(tx_waveform, pulse, pulse_starts, pri_samples, PRIs, fs
         doppler_shift = 2 * vel * fc / c
 
         for tx_idx, tx_sample in enumerate(pulse_starts):
-            tx_time = tx_sample / fs
+            # tx_time = tx_sample / fs
             delay_samples = int(delay_time * fs)
-            pri_len = pri_samples[tx_idx]
+            # pri_len = pri_samples[tx_idx]
               
             echo_sample = tx_sample + delay_samples
             if echo_sample + len(pulse) < total_samples:
@@ -367,7 +368,7 @@ def group_detections_by_doppler_freq(detections, freq_tol_Hz=50):
             
     return reduced_groups
 
-def resolve_true_range(pris_us, folded_ranges_km, max_zones, tol_m=0.05):
+def resolve_true_range(pris_us, folded_ranges_km, max_zones, tol_m):
     """
     Resolve true range for a target folded across multiple PRIs,
     allowing different zone index (m) per PRI.
@@ -413,7 +414,7 @@ def resolve_true_range(pris_us, folded_ranges_km, max_zones, tol_m=0.05):
         'success': False
     }
 
-def unfold_multiple_detections(detections, max_zones, fc, tol_m=0.05):
+def unfold_multiple_detections(detections, max_zones, fc, tol_m):
     groups = group_detections_by_doppler_freq(detections)
     results = []
 
@@ -448,7 +449,8 @@ def main():
     
     # Detection and Association Params
     DR = 50  # dynamic range in dB
-    max_zones = 8
+    max_zones = 12 # max zones for Arange
+    tol_m = 0.1  # tolerance for Arange
     TH1 = 13 # pre detection threshold   
     TH2 = 30 # CFAR threshold    
     
@@ -493,7 +495,7 @@ def main():
     plot_rd_maps(RD_maps, DR, detections, candidates)
     
     # Association
-    unfold_results = unfold_multiple_detections(detections, max_zones, fc, tol_m=0.05)
+    unfold_results = unfold_multiple_detections(detections, max_zones, fc, tol_m)
 
     print("\n--- Associated Targets ---")
     for res in unfold_results:
