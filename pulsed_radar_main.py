@@ -223,7 +223,7 @@ def plot_rd_maps(RD_maps, DR, detections, pre_candidates):
                         d['range_bin'], 'ro', mfc='none', markersize=10, label='CFAR')
 
         ax.set_title(f"{pri_us} µs")
-        ax.set_xlabel("Doppler Bins (centered)")
+        ax.set_xlabel("Doppler Bins")
         if i == 0:
             ax.set_ylabel("Range Bins")
 
@@ -368,7 +368,7 @@ def group_detections_by_doppler_freq(detections, freq_tol_Hz=50):
             
     return reduced_groups
 
-def resolve_true_range(pris_us, folded_ranges_km, max_zones, tol_m):
+def resolve_true_range(pris_us, folded_ranges_km, max_zones, tol_km):
     """
     Resolve true range for a target folded across multiple PRIs,
     allowing different zone index (m) per PRI.
@@ -377,7 +377,7 @@ def resolve_true_range(pris_us, folded_ranges_km, max_zones, tol_m):
         pris_us: List of PRIs in microseconds.
         folded_ranges_km: List of measured folded ranges (in km), same length as pris_us.
         max_zones: Maximum number of zones to check for each PRI.
-        tol_m: Tolerance in km for acceptable spread in computed R_true.
+        tol_km: Tolerance in km for acceptable spread in computed R_true.
 
     Returns:
         dict with fields:
@@ -398,7 +398,7 @@ def resolve_true_range(pris_us, folded_ranges_km, max_zones, tol_m):
             r_true = R_zone_km + R_fold_km
             r_true_list.append(r_true)
 
-        if np.ptp(r_true_list) < tol_m:
+        if np.ptp(r_true_list) < tol_km:
             return {
                 'R_true': np.mean(r_true_list),
                 'zone_indices': m_combo,
@@ -414,7 +414,7 @@ def resolve_true_range(pris_us, folded_ranges_km, max_zones, tol_m):
         'success': False
     }
 
-def unfold_multiple_detections(detections, max_zones, fc, tol_m):
+def unfold_multiple_detections(detections, max_zones, fc, tol_km):
     groups = group_detections_by_doppler_freq(detections)
     results = []
 
@@ -422,7 +422,7 @@ def unfold_multiple_detections(detections, max_zones, fc, tol_m):
         pris_us = [p['PRI_us'] for p in peaks]
         folded_ranges_km = [p['folded_range_km'] for p in peaks]
 
-        result = resolve_true_range(pris_us, folded_ranges_km, max_zones, tol_m)
+        result = resolve_true_range(pris_us, folded_ranges_km, max_zones, tol_km)
         if result['success']:
             results.append({
                 'Velocity': (doppler_freq * c) / (2 * fc),
@@ -449,8 +449,8 @@ def main():
     
     # Detection and Association Params
     DR = 50  # dynamic range in dB
-    max_zones = 12 # max zones for Arange
-    tol_m = 0.1  # tolerance for Arange
+    max_zones = 9 # max zones for Arange
+    tol_km = 0.1  # tolerance for Arange (dictated by MF alignment)
     TH1 = 13 # pre detection threshold   
     TH2 = 30 # CFAR threshold    
     
@@ -495,7 +495,7 @@ def main():
     plot_rd_maps(RD_maps, DR, detections, candidates)
     
     # Association
-    unfold_results = unfold_multiple_detections(detections, max_zones, fc, tol_m)
+    unfold_results = unfold_multiple_detections(detections, max_zones, fc, tol_km)
 
     print("\n--- Associated Targets ---")
     for res in unfold_results:
