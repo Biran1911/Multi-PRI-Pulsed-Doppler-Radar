@@ -360,7 +360,7 @@ def main():
     TH2 = 30
 
     # Simulation time control (change sim_time as needed)
-    sim_time = 1  # seconds (keeps runtime modest); change to 10.0 for longer sim
+    sim_time = 10  # seconds (keeps runtime modest); change to 10.0 for longer sim
     sim_clock = 0.0
 
     # Initialize
