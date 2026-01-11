@@ -139,23 +139,16 @@ def simulate_rx_waveform(tx_waveform, pulse, pulse_starts, pri_samples, PRIs, fs
 
 # --- Build data cube ---
 def build_data_cube(rx_waveform, pulse_starts, pri_samples, Nrange, dec):
-    pulse_starts = (np.array(pulse_starts)//dec).tolist()
-    pri_samples = (np.array(pri_samples)//dec).tolist()
-    data_cube = np.zeros((len(pulse_starts), Nrange), dtype=complex)
-    rx_decimated_waveform = resample_poly(rx_waveform, up=1, down=dec)
+    data_cube = np.zeros((len(pulse_starts), max(pri_samples)), dtype=complex)
     
     for i, start in enumerate(pulse_starts):
         end = start + pri_samples[i]
-        data_cube[i, :pri_samples[i]] = rx_decimated_waveform[start:end]
-        # data_cube[i, :pri_samples[i]] = rx_waveform[start:end]
-    return data_cube, Nrange
+        data_cube[i, :pri_samples[i]] = rx_waveform[start:end]
+    return data_cube, max(pri_samples)
 
 # --- Process range-Doppler per PRI ---
-def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, max_samples, dec):
-    dec_pulse = resample_poly(pulse, up=1, down=dec)
-    matched_filter = np.fft.fft(np.conj(dec_pulse[::-1]), n=max_samples)
-    # matched_filter = np.fft.fft(np.conj(pulse[::-1]), n=max_samples)
-    
+def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, Nrange, dec):
+    matched_filter = np.fft.fft(np.conj(pulse[::-1]), n=Nrange)
     RD_maps = {}
 
     for pri_us in sorted(set(round(p * 1e6, 1) for p in PRIs)):
@@ -163,9 +156,9 @@ def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, max_sam
         group_data = data_cube[indices]
         doppler_N = len(indices)
 
-        # Range compression
+        # Range compression and decimation
         compressed = np.array([
-            np.fft.ifft(np.fft.fft(group_data[i, :]) * matched_filter)
+            np.fft.ifft(np.fft.fft(group_data[i, :], n=Nrange) * matched_filter)
             for i in range(doppler_N)
         ])
 
@@ -175,7 +168,7 @@ def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, max_sam
 
         doppler_freq = np.fft.fftshift(np.fft.fftfreq(doppler_N, d=pri_us * 1e-6))
         doppler_velocity = doppler_freq * c / (2 * fc)
-        range_vector = np.arange(max_samples) / fs * c / 2 / 1e3  # km
+        range_vector = np.arange(Nrange) / fs * c / 2 / 1e3  # km
 
         RD_maps[pri_us] = {
             'fft_db': fft_db,
@@ -186,7 +179,7 @@ def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, max_sam
     return RD_maps
 
 # --- Plot range-Doppler maps ---
-def plot_rd_maps(RD_maps, DR, detections, pre_candidates):
+def plot_rd_maps(RD_maps, DR, detections, pre_candidates, dec):
     """
     Plots Range–Doppler maps for each PRI and overlays CFAR detections (and optional pre-detections).
 
@@ -216,7 +209,7 @@ def plot_rd_maps(RD_maps, DR, detections, pre_candidates):
 
         # Doppler bin axis centered around 0
         doppler_bins = np.arange(-num_doppler_bins // 2, num_doppler_bins // 2)
-        range_bins = np.arange(num_range_bins)
+        range_bins = np.arange(num_range_bins/dec)
 
         ax.imshow(
             fft_db.T,
@@ -461,8 +454,8 @@ def main():
     Nrange = 1024 # range samples (fast time)
     waveform = 'barker_13' # waveform type
     fc = 34.5e9
-    fs = 20e6
-    dec = 1;
+    fs = 60e6
+    dec = 3;
     f_start = -fs/1e6 # lfm start frequency
     f_end = +fs/1e6 # lfm end frequency
     PWclks = 360 # PW in clocks
@@ -500,7 +493,7 @@ def main():
             pri_groups[round(pri_val * 1e6, 1)].append(i)
             
         # Process RD maps
-        RD_map = process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, max_samples, dec)
+        RD_map = process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, Nrange, dec)
         RD_maps.update(RD_map)
     
     # Detection
@@ -512,8 +505,8 @@ def main():
     # print(tabulate(detections, headers="keys", tablefmt="pretty", floatfmt=".2f"))   
     
     # Plot maps from 5 cycles
-    # plot_rd_maps(RD_maps, DR, detections, candidates)
-    plot_rd_maps(RD_maps, DR, [], []) # plot maps without detection and association
+    # plot_rd_maps(RD_maps, DR, detections, candidates, dec)
+    plot_rd_maps(RD_maps, DR, [], [], dec) # plot maps without detection and association
     
     # # Association
     # unfold_results = unfold_multiple_detections(detections, max_zones, fc, tol_km)
