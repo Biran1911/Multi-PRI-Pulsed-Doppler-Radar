@@ -196,7 +196,7 @@ def plot_rd_maps(RD_maps, DR, detections, pre_candidates):
         detections : list of confirmed detections (from CFAR)
         pre_candidates : list of pre-detection candidates (optional)
     """
-    fig, axs = plt.subplots(1, len(RD_maps), figsize=(20, 5), sharey=True)
+    fig, axs = plt.subplots(1, len(RD_maps), figsize=(17, 8), sharey=True)
 
     # Group detections by PRI for fast lookup
     det_by_pri = {}
