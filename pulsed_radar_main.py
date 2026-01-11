@@ -13,14 +13,14 @@ c = 3e8
 # --- Target definition ---
 def define_targets():
     return [
-        (2000, 30, 100),
+        (2000, 10, 100),
         # (11500, 30, 100),
         # (35000, -25, 100),
         # (40000, 10, 100),
     ]
 
 # --- Generate baseband pulse ---
-def generate_pulse(fs, waveform, nbin, f_start, f_end):
+def generate_pulse(fs, waveform, PWclks, f_start, f_end):
     """
     Generate Barker or LFM pulse waveform.
 
@@ -30,8 +30,8 @@ def generate_pulse(fs, waveform, nbin, f_start, f_end):
         Sampling frequency [Hz]
     waveform : str
         Waveform type: 'barker_13', 'lfm', etc.
-    nbin : float
-        Range bin or pulse length parameter (depends on design)
+    PWclks : int
+        pulse length parameter (depends on design)
     f_start : float, optional
         Start frequency for LFM [Hz]
     f_end : float, optional
@@ -42,25 +42,47 @@ def generate_pulse(fs, waveform, nbin, f_start, f_end):
     # --- Handle Barker coded waveforms ---
     match waveform.lower():
         case 'barker_13':
+            # --- Generate Barker pulse samples ---
             code = np.array([+1, +1, +1, -1, -1, -1, +1, -1, -1, -1, +1, -1, +1])
+            barker_bins = 19;
+            chip_duration = (barker_bins / fs) / len(code)
+            chip_samples = int(fs * chip_duration)
+            pulse_real = np.repeat(code, chip_samples)
+            t_pulse = np.arange(len(pulse_real)) / fs
+            pulse_complex = pulse_real * np.exp(1j * 2 * np.pi * 1e6 * t_pulse)
+            return pulse_complex
         case 'lfm':
             # --- Generate LFM waveform ---
-            pulse_duration = nbin / fs  # fallback based on same logic
+            pulse_duration = PWclks / fs  # fallback based on same logic
             t = np.arange(0, pulse_duration, 1/fs)
             k = (f_end - f_start) / pulse_duration  # chirp rate
             phase = 2 * np.pi * (f_start * t + 0.5 * k * t**2)
             pulse_complex = np.exp(1j * phase)
             return pulse_complex
+        case 'mls_63':
+            # --- Generate MLS-63 waveform ---
+            # Generate MLS-63 sequence (bipolar: +1, -1)
+            mls_code = np.array([
+                    1, 1, 1, 1, 1, 1, -1, -1, 1, 1, -1, 1, 1, 1, -1, 1,
+                    -1, 1, -1, -1, -1, 1, -1, -1, 1, -1, 1, 1, -1, -1, 1, 1,
+                    1, -1, -1, -1, -1, 1, 1, -1, 1, -1, -1, 1, 1, -1, -1, -1,
+                    1, -1, 1, -1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, 1
+                ])
+            
+            # Calculate samples per chip
+            chip_duration = (PWclks / fs) / len(mls_code)
+            chip_samples = int(fs * chip_duration)
+            
+            # Oversample by repeating each chip
+            pulse_real = np.repeat(mls_code, chip_samples)
+            
+            # Convert to complex (baseband)
+            pulse_complex = pulse_real.astype(complex)
+            
+            return pulse_complex 
         case _:
             raise ValueError(f"Unsupported waveform: {waveform}")
 
-    # --- Generate Barker pulse samples ---
-    chip_duration = (nbin / fs) / len(code)
-    chip_samples = int(fs * chip_duration)
-    pulse_real = np.repeat(code, chip_samples)
-    t_pulse = np.arange(len(pulse_real)) / fs
-    pulse_complex = pulse_real * np.exp(1j * 2 * np.pi * 1e6 * t_pulse)
-    return pulse_complex
 
 # --- Build transmit waveform and PRI schedule ---
 def build_tx_waveform(pulse, PRI_set, fs, Npulse):
@@ -133,6 +155,7 @@ def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, max_sam
     dec_pulse = resample_poly(pulse, up=1, down=dec)
     matched_filter = np.fft.fft(np.conj(dec_pulse[::-1]), n=max_samples)
     # matched_filter = np.fft.fft(np.conj(pulse[::-1]), n=max_samples)
+    
     RD_maps = {}
 
     for pri_us in sorted(set(round(p * 1e6, 1) for p in PRIs)):
@@ -432,17 +455,16 @@ def unfold_multiple_detections(detections, max_zones, fc, tol_km):
 
 # --- Main ---
 def main():
-    # Wveform Params
-    PRI_set = [44.5, 40, 38, 34.5, 31]  # µs
+    # Waveform Params
+    PRI_set = [39, 37, 34, 30.5, 27.5]  # µs
     Npulse = 2048 # number of pulses (slow time)
     Nrange = 1024 # range samples (fast time)
     waveform = 'barker_13' # waveform type
     fc = 34.5e9
-    fs = 60e6
-    dec = 3;
+    fs = 20e6
+    dec = 1;
     f_start = -fs/1e6 # lfm start frequency
     f_end = +fs/1e6 # lfm end frequency
-    n_bin = 19 # number of bins
     PWclks = 360 # PW in clocks
     
     # Detection and Association Params
@@ -456,7 +478,7 @@ def main():
     targets = define_targets()
     
     # Pulse Generator
-    pulse = generate_pulse(fs, waveform, n_bin, f_start, f_end)
+    pulse = generate_pulse(fs, waveform, PWclks, f_start, f_end)
     
     RD_maps = {}
     
@@ -482,28 +504,29 @@ def main():
         RD_maps.update(RD_map)
     
     # Detection
-    candidates = pre_detection(RD_maps, pri_groups, fs, c, fc, TH1)
-    print("\n--- Detected Pre Plots ---")
-    print(tabulate(candidates, headers="keys", tablefmt="pretty", floatfmt=".2f")) 
-    detections = cfar_detection(RD_maps, candidates, fs, c, fc, Tr=10, Td=12, Gr=6, Gd=3, offset_dB=TH2)
-    print("\n--- Detected Plots ---")
-    print(tabulate(detections, headers="keys", tablefmt="pretty", floatfmt=".2f"))   
+    # candidates = pre_detection(RD_maps, pri_groups, fs, c, fc, TH1)
+    # print("\n--- Detected Pre Plots ---")
+    # print(tabulate(candidates, headers="keys", tablefmt="pretty", floatfmt=".2f")) 
+    # detections = cfar_detection(RD_maps, candidates, fs, c, fc, Tr=10, Td=12, Gr=6, Gd=3, offset_dB=TH2)
+    # print("\n--- Detected Plots ---")
+    # print(tabulate(detections, headers="keys", tablefmt="pretty", floatfmt=".2f"))   
     
     # Plot maps from 5 cycles
-    plot_rd_maps(RD_maps, DR, detections, candidates)
+    # plot_rd_maps(RD_maps, DR, detections, candidates)
+    plot_rd_maps(RD_maps, DR, [], []) # plot maps without detection and association
     
-    # Association
-    unfold_results = unfold_multiple_detections(detections, max_zones, fc, tol_km)
+    # # Association
+    # unfold_results = unfold_multiple_detections(detections, max_zones, fc, tol_km)
 
-    print("\n--- Associated Targets ---")
-    for res in unfold_results:
-        print(f"✅ Estimated range: {res['R_true']:.2f} km")
-        print(f"✅ Estiamted velocity: {res['Velocity']:.2f} m/s")
-        print(f"Used zone indices m: {res['zone_indices']}")
-        print("PRI to folded range association:")
-        for peak, r_true in zip(res['peaks'], res['r_true_list']):
-            print(f"  PRI: {peak['PRI_us']} µs folded {peak['folded_range_km']:.2f} km -> R_true: {r_true:.3f} km")
-        print("\n")
+    # print("\n--- Associated Targets ---")
+    # for res in unfold_results:
+    #     print(f"✅ Estimated range: {res['R_true']:.2f} km")
+    #     print(f"✅ Estiamted velocity: {res['Velocity']:.2f} m/s")
+    #     print(f"Used zone indices m: {res['zone_indices']}")
+    #     print("PRI to folded range association:")
+    #     for peak, r_true in zip(res['peaks'], res['r_true_list']):
+    #         print(f"  PRI: {peak['PRI_us']} µs folded {peak['folded_range_km']:.2f} km -> R_true: {r_true:.3f} km")
+    #     print("\n")
             
 # Run
 if __name__ == "__main__":
