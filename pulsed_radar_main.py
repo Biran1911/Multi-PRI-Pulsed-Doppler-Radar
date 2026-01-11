@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from tabulate import tabulate
 from itertools import product
+from scipy.signal import resample_poly
 
 plt.close('all')
 
@@ -12,10 +13,10 @@ c = 3e8
 # --- Target definition ---
 def define_targets():
     return [
-        (2000, 0, 100),
-        (11500, 30, 100),
-        (35000, -25, 100),
-        (40000, 10, 100),
+        (2000, 30, 100),
+        # (11500, 30, 100),
+        # (35000, -25, 100),
+        # (40000, 10, 100),
     ]
 
 # --- Generate baseband pulse ---
@@ -40,18 +41,6 @@ def generate_pulse(fs, waveform, nbin, f_start, f_end):
     """
     # --- Handle Barker coded waveforms ---
     match waveform.lower():
-        case 'barker_2':
-            code = np.array([+1, -1])
-        case 'barker_3':
-            code = np.array([+1, +1, -1])
-        case 'barker_4':
-            code = np.array([+1, +1, -1, +1])
-        case 'barker_5':
-            code = np.array([+1, +1, +1, -1, +1])
-        case 'barker_7':
-            code = np.array([+1, +1, +1, -1, -1, +1, -1])
-        case 'barker_11':
-            code = np.array([+1, +1, +1, -1, -1, -1, +1, -1, -1, +1, -1])
         case 'barker_13':
             code = np.array([+1, +1, +1, -1, -1, -1, +1, -1, -1, -1, +1, -1, +1])
         case 'lfm':
@@ -127,16 +116,23 @@ def simulate_rx_waveform(tx_waveform, pulse, pulse_starts, pri_samples, PRIs, fs
     return rx_waveform, pulse_windows
 
 # --- Build data cube ---
-def build_data_cube(rx_waveform, pulse_starts, pri_samples, Nrange):
+def build_data_cube(rx_waveform, pulse_starts, pri_samples, Nrange, dec):
+    pulse_starts = (np.array(pulse_starts)//dec).tolist()
+    pri_samples = (np.array(pri_samples)//dec).tolist()
     data_cube = np.zeros((len(pulse_starts), Nrange), dtype=complex)
+    rx_decimated_waveform = resample_poly(rx_waveform, up=1, down=dec)
+    
     for i, start in enumerate(pulse_starts):
         end = start + pri_samples[i]
-        data_cube[i, :pri_samples[i]] = rx_waveform[start:end]
+        data_cube[i, :pri_samples[i]] = rx_decimated_waveform[start:end]
+        # data_cube[i, :pri_samples[i]] = rx_waveform[start:end]
     return data_cube, Nrange
 
 # --- Process range-Doppler per PRI ---
-def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, max_samples):
-    matched_filter = np.conj(np.fft.fft(pulse, n=max_samples))
+def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, max_samples, dec):
+    dec_pulse = resample_poly(pulse, up=1, down=dec)
+    matched_filter = np.fft.fft(np.conj(dec_pulse[::-1]), n=max_samples)
+    # matched_filter = np.fft.fft(np.conj(pulse[::-1]), n=max_samples)
     RD_maps = {}
 
     for pri_us in sorted(set(round(p * 1e6, 1) for p in PRIs)):
@@ -441,11 +437,13 @@ def main():
     Npulse = 2048 # number of pulses (slow time)
     Nrange = 1024 # range samples (fast time)
     waveform = 'barker_13' # waveform type
-    f_start = -10e6 # lfm start frequency
-    f_end = 10e6 # lfm end frequency
-    n_bin = 19 # number of bins
     fc = 34.5e9
-    fs = 20e6
+    fs = 60e6
+    dec = 3;
+    f_start = -fs/1e6 # lfm start frequency
+    f_end = +fs/1e6 # lfm end frequency
+    n_bin = 19 # number of bins
+    PWclks = 360 # PW in clocks
     
     # Detection and Association Params
     DR = 50  # dynamic range in dB
@@ -472,7 +470,7 @@ def main():
         rx_waveform, pulse_windows = simulate_rx_waveform(tx_waveform, pulse, pulse_starts, pri_samples, PRIs, fs, fc, targets)
         
         # Data cube
-        data_cube, max_samples = build_data_cube(rx_waveform, pulse_starts, pri_samples, Nrange)
+        data_cube, max_samples = build_data_cube(rx_waveform, pulse_starts, pri_samples, Nrange, dec)
 
         # PRI grouping
         pri_groups = defaultdict(list)
@@ -480,7 +478,7 @@ def main():
             pri_groups[round(pri_val * 1e6, 1)].append(i)
             
         # Process RD maps
-        RD_map = process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, max_samples)
+        RD_map = process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, max_samples, dec)
         RD_maps.update(RD_map)
     
     # Detection
