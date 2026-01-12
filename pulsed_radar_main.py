@@ -13,10 +13,10 @@ c = 3e8
 # --- Target definition ---
 def define_targets():
     return [
-        (2000, 10, 100),
-        # (11500, 30, 100),
-        # (35000, -25, 100),
-        # (40000, 10, 100),
+        (2000, 20, 1),
+        # (11500, 30, 1),
+        # (35000, -25, 1),
+        # (40000, 10, 1),
     ]
 
 # --- Generate baseband pulse ---
@@ -43,11 +43,12 @@ def generate_pulse(fs, waveform, PWclks, f_start, f_end):
     match waveform.lower():
         case 'barker_13':
             # --- Generate Barker pulse samples ---
-            code = np.array([+1, +1, +1, -1, -1, -1, +1, -1, -1, -1, +1, -1, +1])
-            barker_bins = 19;
-            chip_duration = (barker_bins / fs) / len(code)
-            chip_samples = int(fs * chip_duration)
-            pulse_real = np.repeat(code, chip_samples)
+            code = np.array([+1, +1, +1, -1, -1, -1, +1, -1, -1, -1, +1, -1, +1])            
+            samples_per_chip = 19
+            used_samples = samples_per_chip * len(code)
+            pulse_real = np.repeat(code, samples_per_chip)
+            if used_samples < PWclks:
+                pulse_real = np.pad(pulse_real, (0, PWclks - used_samples), mode='constant')          
             t_pulse = np.arange(len(pulse_real)) / fs
             pulse_complex = pulse_real * np.exp(1j * 2 * np.pi * 1e6 * t_pulse)
             return pulse_complex
@@ -87,7 +88,7 @@ def generate_pulse(fs, waveform, PWclks, f_start, f_end):
 # --- Build transmit waveform and PRI schedule ---
 def build_tx_waveform(pulse, PRI_set, fs, Npulse):
     PRIs = np.tile(np.array(PRI_set) * 1e-6, Npulse)
-    pri_samples = [int(pri * fs) for pri in PRIs]
+    pri_samples = [int(round(pri * fs)) for pri in PRIs]
     total_samples = sum(pri_samples)
     tx_waveform = np.zeros(total_samples, dtype=complex)
     pulse_starts = []
@@ -134,7 +135,7 @@ def simulate_rx_waveform(tx_waveform, pulse, pulse_starts, pri_samples, PRIs, fs
                 rx_waveform[echo_sample:echo_sample + len(pulse)] += echo
 
     # Add noise
-    rx_waveform += 10 * (np.random.randn(total_samples) + 1j * np.random.randn(total_samples))
+    rx_waveform += 0.1 * (np.random.randn(total_samples) + 1j * np.random.randn(total_samples))
     return rx_waveform, pulse_windows
 
 # --- Build data cube ---
@@ -148,34 +149,46 @@ def build_data_cube(rx_waveform, pulse_starts, pri_samples, Nrange, dec):
 
 # --- Process range-Doppler per PRI ---
 def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, Nrange, dec):
-    matched_filter = np.fft.fft(np.conj(pulse[::-1]), n=Nrange)
     RD_maps = {}
-
     for pri_us in sorted(set(round(p * 1e6, 1) for p in PRIs)):
         indices = pri_groups[pri_us]
         group_data = data_cube[indices]
         doppler_N = len(indices)
-
-        # Range compression and decimation
-        compressed = np.array([
-            np.fft.ifft(np.fft.fft(group_data[i, :], n=Nrange) * matched_filter)
-            for i in range(doppler_N)
-        ])
-
+        
+        # Decimate FIRST (before matched filtering)
+        group_data_dec = group_data[:, ::dec]
+        fs_dec = fs / dec  # New effective sampling rate
+        
+        # Matched filter at decimated rate
+        mf_nfft = group_data_dec.shape[1]
+        pulse_dec = pulse[::dec]  # Decimate the pulse too
+        matched_filter = np.fft.fft(np.conj(pulse_dec[::-1]), n=mf_nfft)
+        
+        # Range compression
+        compressed_dec = np.zeros((doppler_N, mf_nfft), dtype=complex)
+        for i in range(doppler_N):
+            compressed_dec[i, :] = np.fft.ifft(
+                np.fft.fft(group_data_dec[i, :]) * matched_filter
+            )
+        
         # Doppler FFT
-        fft_data = np.fft.fftshift(np.fft.fft(compressed, axis=0), axes=0)
+        fft_data = np.fft.fftshift(np.fft.fft(compressed_dec, axis=0), axes=0)
         fft_db = 20 * np.log10(np.abs(fft_data) / np.mean(np.abs(fft_data)) + 1e-12)
-
+        
         doppler_freq = np.fft.fftshift(np.fft.fftfreq(doppler_N, d=pri_us * 1e-6))
         doppler_velocity = doppler_freq * c / (2 * fc)
-        range_vector = np.arange(Nrange) / fs * c / 2 / 1e3  # km
-
+        range_vector = np.arange(mf_nfft) / fs_dec * c / 2 / 1e3  # Use decimated fs
+        
         RD_maps[pri_us] = {
             'fft_db': fft_db,
             'doppler_velocity': doppler_velocity,
             'range_vector': range_vector
         }
-
+     
+        # DEBUG
+        # fig, axs = plt.subplots(1, len(RD_maps), figsize=(17, 8), sharey=True)
+        # plt.imshow(RD_maps[pri_us]['fft_db'].T)
+        
     return RD_maps
 
 # --- Plot range-Doppler maps ---
@@ -209,7 +222,7 @@ def plot_rd_maps(RD_maps, DR, detections, pre_candidates, dec):
 
         # Doppler bin axis centered around 0
         doppler_bins = np.arange(-num_doppler_bins // 2, num_doppler_bins // 2)
-        range_bins = np.arange(num_range_bins/dec)
+        range_bins = np.arange(num_range_bins)
 
         ax.imshow(
             fft_db.T,
@@ -244,7 +257,7 @@ def plot_rd_maps(RD_maps, DR, detections, pre_candidates, dec):
     plt.show()
 
 # --- Detection ---
-def pre_detection(RD_maps, pri_groups, fs, c, fc, TH1):
+def pre_detection(RD_maps, pri_groups, fs, c, fc, TH1, dec):
     """
     Detects strong peaks in each RD map.
     Returns a list of detected peaks with physical parameters.
@@ -262,14 +275,14 @@ def pre_detection(RD_maps, pri_groups, fs, c, fc, TH1):
                 if power >= peak_threshold:
                     candidates.append({
                         'PRI_us': pri_us,
-                        'doppler_bin': d_bin-fft_db.shape[0]/2,
+                        'doppler_bin': int(d_bin-fft_db.shape[0]/2),
                         'range_bin': r_bin,
-                        'power_dB': power,
+                        'power_dB': int(power),
                     })
 
     return candidates
 
-def cfar_detection(RD_maps, candidates, fs, c, fc, Tr, Td, Gr, Gd, offset_dB):
+def cfar_detection(RD_maps, candidates, fs, c, fc, dec, Tr, Td, Gr, Gd, offset_dB):
     """
     Candidate-based 2D Cell Averaging CFAR (CA-CFAR)
 
@@ -307,7 +320,7 @@ def cfar_detection(RD_maps, candidates, fs, c, fc, Tr, Td, Gr, Gd, offset_dB):
         Nd, Nr = RDM_dB.shape  # Nd = doppler bins (rows), Nr = range bins (cols)
 
         # Candidate indices
-        i_range = int(cand['range_bin'])                # range → column
+        i_range = int(cand['range_bin'])                     # range → column
         j_doppler = int((cand['doppler_bin'] + Nd//2) % Nd)  # doppler → row (fftshifted)
 
         # Skip edges
@@ -339,7 +352,7 @@ def cfar_detection(RD_maps, candidates, fs, c, fc, Tr, Td, Gr, Gd, offset_dB):
         if CUT_dB > threshold_dB:
             doppler_freq = np.fft.fftshift(np.fft.fftfreq(Nd, d=pri_us * 1e-6))[j_doppler]
             velocity = doppler_freq * c / (2 * fc)
-            folded_range = (i_range / fs) * c / 2  # meters
+            folded_range = dec * (i_range / fs) * c / 2  # meters
           
             cand_out = cand.copy()
             cand_out['doppler_freq'] = doppler_freq 
@@ -454,8 +467,8 @@ def main():
     Nrange = 1024 # range samples (fast time)
     waveform = 'barker_13' # waveform type
     fc = 34.5e9
-    fs = 60e6
-    dec = 3;
+    fs = 60e6 # Tx sampling rate is decimated (dec) for Rx
+    dec = 3; # decimation factor for Rx
     f_start = -fs/1e6 # lfm start frequency
     f_end = +fs/1e6 # lfm end frequency
     PWclks = 360 # PW in clocks
@@ -465,7 +478,7 @@ def main():
     max_zones = 9 # max zones for Arange
     tol_km = 0.1  # tolerance for Arange (dictated by MF alignment)
     TH1 = 13 # pre detection threshold   
-    TH2 = 30 # CFAR threshold    
+    TH2 = 5 # CFAR threshold    
     
     # Targets
     targets = define_targets()
@@ -497,18 +510,18 @@ def main():
         RD_maps.update(RD_map)
     
     # Detection
-    # candidates = pre_detection(RD_maps, pri_groups, fs, c, fc, TH1)
-    # print("\n--- Detected Pre Plots ---")
-    # print(tabulate(candidates, headers="keys", tablefmt="pretty", floatfmt=".2f")) 
-    # detections = cfar_detection(RD_maps, candidates, fs, c, fc, Tr=10, Td=12, Gr=6, Gd=3, offset_dB=TH2)
+    candidates = pre_detection(RD_maps, pri_groups, fs, c, fc, TH1, dec)
+    print("\n--- Detected Pre Plots ---")
+    print(tabulate(candidates, headers="keys", tablefmt="pretty", floatfmt=".2f")) 
+    # detections = cfar_detection(RD_maps, candidates, fs, c, fc, dec, Tr=3, Td=12, Gr=1, Gd=3, offset_dB=TH2)
     # print("\n--- Detected Plots ---")
     # print(tabulate(detections, headers="keys", tablefmt="pretty", floatfmt=".2f"))   
     
     # Plot maps from 5 cycles
-    # plot_rd_maps(RD_maps, DR, detections, candidates, dec)
-    plot_rd_maps(RD_maps, DR, [], [], dec) # plot maps without detection and association
+    plot_rd_maps(RD_maps, DR, [], candidates, dec)
+    # plot_rd_maps(RD_maps, DR, [], [], dec) # plot maps without detection and association
     
-    # # Association
+    # Association
     # unfold_results = unfold_multiple_detections(detections, max_zones, fc, tol_km)
 
     # print("\n--- Associated Targets ---")
