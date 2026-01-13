@@ -41,9 +41,9 @@ def generate_pulse(fs, waveform, PWclks, f_start, f_end):
     """
     # --- Handle Barker coded waveforms ---
     match waveform.lower():
-        case 'barker_13':
+        case 'barker13':
             # --- Generate Barker pulse samples ---
-            code = np.array([+1, +1, +1, -1, -1, -1, +1, -1, -1, -1, +1, -1, +1])            
+            code = np.array([+1, +1, +1, +1, +1, -1, -1, +1, +1, -1, +1, -1, +1])              
             samples_per_chip = 19
             used_samples = samples_per_chip * len(code)
             pulse_real = np.repeat(code, samples_per_chip)
@@ -60,7 +60,7 @@ def generate_pulse(fs, waveform, PWclks, f_start, f_end):
             phase = 2 * np.pi * (f_start * t + 0.5 * k * t**2)
             pulse_complex = np.exp(1j * phase)
             return pulse_complex
-        case 'mls_63':
+        case 'mls63':
             # --- Generate MLS-63 waveform ---
             # Generate MLS-63 sequence (bipolar: +1, -1)
             mls_code = np.array([
@@ -155,23 +155,31 @@ def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, Nrange,
         group_data = data_cube[indices]
         doppler_N = len(indices)
         
-        # Decimate FIRST (before matched filtering)
+        # Decimate (RFM FW)
         group_data_dec = group_data[:, ::dec]
         fs_dec = fs / dec  # New effective sampling rate
         
-        # Matched filter at decimated rate
+        # Matched filter at decimated rate (RFM FW)
         mf_nfft = group_data_dec.shape[1]
         pulse_dec = pulse[::dec]  # Decimate the pulse too
         matched_filter = np.fft.fft(np.conj(pulse_dec[::-1]), n=mf_nfft)
         
-        # Range compression
+        # Range compression (RFM FW)
         compressed_dec = np.zeros((doppler_N, mf_nfft), dtype=complex)
         for i in range(doppler_N):
             compressed_dec[i, :] = np.fft.ifft(
                 np.fft.fft(group_data_dec[i, :]) * matched_filter
             )
+        compressed_dec = np.roll(compressed_dec, -(len(pulse_dec)-1), axis=1) # range bin alignment after decimation
         
-        # Doppler FFT
+        # Welch fast-time filter (DSP FW)
+        n = np.arange(mf_nfft)
+        mid = (mf_nfft - 1) / 2
+        range_win = 1.0 - ((n - mid) / mid) ** 2
+        range_win = np.clip(range_win, 0.0, None)  # numerical safety
+        compressed_dec *= range_win[None, :]
+        
+        # Doppler FFT (DSP FW)
         fft_data = np.fft.fftshift(np.fft.fft(compressed_dec, axis=0), axes=0)
         fft_db = 20 * np.log10(np.abs(fft_data) / np.mean(np.abs(fft_data)) + 1e-12)
         
@@ -186,8 +194,14 @@ def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, Nrange,
         }
      
         # DEBUG
-        # fig, axs = plt.subplots(1, len(RD_maps), figsize=(17, 8), sharey=True)
-        # plt.imshow(RD_maps[pri_us]['fft_db'].T)
+        fig, axs = plt.subplots(1, len(RD_maps), figsize=(17, 8), sharey=True)
+        plt.imshow(
+            RD_maps[pri_us]['fft_db'].T,
+            cmap = 'jet',
+            vmax = np.max(RD_maps[pri_us]['fft_db']),
+            vmin = np.max(RD_maps[pri_us]['fft_db']) - 50
+            )
+        plt.colorbar(label='dB')
         
     return RD_maps
 
@@ -465,7 +479,7 @@ def main():
     PRI_set = [39, 37, 34, 30.5, 27.5]  # µs
     Npulse = 2048 # number of pulses (slow time)
     Nrange = 1024 # range samples (fast time)
-    waveform = 'barker_13' # waveform type
+    waveform = 'barker13' # waveform type
     fc = 34.5e9
     fs = 60e6 # Tx sampling rate is decimated (dec) for Rx
     dec = 3; # decimation factor for Rx
@@ -477,7 +491,7 @@ def main():
     DR = 50  # dynamic range in dB
     max_zones = 9 # max zones for Arange
     tol_km = 0.1  # tolerance for Arange (dictated by MF alignment)
-    TH1 = 13 # pre detection threshold   
+    TH1 = 1 # pre detection threshold   
     TH2 = 5 # CFAR threshold    
     
     # Targets
@@ -518,8 +532,8 @@ def main():
     # print(tabulate(detections, headers="keys", tablefmt="pretty", floatfmt=".2f"))   
     
     # Plot maps from 5 cycles
-    plot_rd_maps(RD_maps, DR, [], candidates, dec)
-    # plot_rd_maps(RD_maps, DR, [], [], dec) # plot maps without detection and association
+    # plot_rd_maps(RD_maps, DR, detections, candidates, dec)
+    plot_rd_maps(RD_maps, DR, [], candidates, dec) # plot maps without detection and association
     
     # Association
     # unfold_results = unfold_multiple_detections(detections, max_zones, fc, tol_km)
