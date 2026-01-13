@@ -503,7 +503,7 @@ def main():
     PRI_set = [39, 37, 34, 30.5, 27.5]  # µs
     Npulse = 2048 # number of pulses (slow time)
     Nrange = 1024 # range samples (fast time)
-    waveform = 'mls63' # waveform type
+    waveform = 'barker13' # waveform type
     fc = 34.5e9
     fs = 60e6 # Tx sampling rate is decimated (dec) for Rx
     dec = 3; # decimation factor for Rx
@@ -516,7 +516,7 @@ def main():
     max_zones = 12 # max zones for Arange
     tol_km = 0.1  # tolerance for Arange (dictated by MF alignment)
     TH1 = 13 # pre detection threshold   
-    TH2 = 5 # CFAR threshold    
+    TH2 = 10 # CFAR threshold    
     
     # Targets
     targets = define_targets()
