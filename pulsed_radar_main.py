@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from tabulate import tabulate
 from itertools import product
-from scipy.signal import resample_poly
 
 plt.close('all')
 
@@ -135,7 +134,7 @@ def simulate_rx_waveform(tx_waveform, pulse, pulse_starts, pri_samples, PRIs, fs
                 rx_waveform[echo_sample:echo_sample + len(pulse)] += echo
 
     # Add noise
-    rx_waveform += 0.1 * (np.random.randn(total_samples) + 1j * np.random.randn(total_samples))
+    # rx_waveform += 0.1 * (np.random.randn(total_samples) + 1j * np.random.randn(total_samples))
     return rx_waveform, pulse_windows
 
 # --- Build data cube ---
@@ -172,12 +171,18 @@ def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, Nrange,
             )
         compressed_dec = np.roll(compressed_dec, -(len(pulse_dec)-1), axis=1) # range bin alignment after decimation
         
-        # Welch fast-time filter (DSP FW)
-        n = np.arange(mf_nfft)
-        mid = (mf_nfft - 1) / 2
-        range_win = 1.0 - ((n - mid) / mid) ** 2
-        range_win = np.clip(range_win, 0.0, None)  # numerical safety
-        compressed_dec *= range_win[None, :]
+        # TODO fast-time filter (DSP FW)
+        # Welch
+        # n = np.arange(mf_nfft)
+        # mid = (mf_nfft - 1) / 2
+        # range_win = 1.0 - ((n - mid) / mid) ** 2
+        # range_win = np.clip(range_win, 0.0, None)  # numerical safety
+        
+        # Kaiser
+        # beta = 8.6  # Gives ~-60dB sidelobes (adjust between 5-10 based on your needs)
+        # range_win = np.kaiser(mf_nfft, beta)
+        
+        # compressed_dec *= range_win[None, :]
         
         # Doppler FFT (DSP FW)
         fft_data = np.fft.fftshift(np.fft.fft(compressed_dec, axis=0), axes=0)
@@ -194,16 +199,17 @@ def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, Nrange,
         }
      
         # DEBUG
-        fig, axs = plt.subplots(1, len(RD_maps), figsize=(17, 8), sharey=True)
-        plt.imshow(
-            RD_maps[pri_us]['fft_db'].T,
-            cmap = 'jet',
-            vmax = np.max(RD_maps[pri_us]['fft_db']),
-            vmin = np.max(RD_maps[pri_us]['fft_db']) - 50
-            )
-        plt.colorbar(label='dB')
+        # plt.imshow(
+        #     fft_db.T,
+        #     cmap = 'jet',
+        #     vmax = np.max(RD_maps[pri_us]['fft_db']),
+        #     vmin = np.max(RD_maps[pri_us]['fft_db']) - 50,
+        #     aspect='auto'
+        #     )
+        # plt.colorbar(label='dB')
         
     return RD_maps
+
 
 # --- Plot range-Doppler maps ---
 def plot_rd_maps(RD_maps, DR, detections, pre_candidates, dec):
@@ -270,29 +276,47 @@ def plot_rd_maps(RD_maps, DR, detections, pre_candidates, dec):
     plt.suptitle("Range–Doppler Maps with Detections", y=1.05, fontsize=16)
     plt.show()
 
-# --- Detection ---
-def pre_detection(RD_maps, pri_groups, fs, c, fc, TH1, dec):
+# --- Pre Detection (pre plots) ---
+def pre_detection(RD_maps, pri_groups, fs, c, fc, TH1, dwin=1, rwin=1):
     """
-    Detects strong peaks in each RD map.
+    Detects strong peaks in each RD map and check local maximum.
     Returns a list of detected peaks with physical parameters.
     Each item: dict with PRI_us, doppler_bin, doppler_freq, velocity,
                range_bin, folded_range_km, power_dB
     """
     candidates = []
+
     for pri_us, data in RD_maps.items():
         fft_db = data['fft_db']
         peak_threshold = np.max(fft_db) - TH1
 
-        for d_bin in range(fft_db.shape[0]):  # Doppler bins
-            for r_bin in range(fft_db.shape[1]):  # Range bins
+        Nd, Nr = fft_db.shape
+
+        for d_bin in range(Nd):
+            for r_bin in range(Nr):
                 power = fft_db[d_bin, r_bin]
-                if power >= peak_threshold:
-                    candidates.append({
-                        'PRI_us': pri_us,
-                        'doppler_bin': int(d_bin-fft_db.shape[0]/2),
-                        'range_bin': r_bin,
-                        'power_dB': int(power),
-                    })
+
+                if power < peak_threshold:
+                    continue
+
+                # neighborhood bounds
+                d0 = max(0, d_bin - dwin)
+                d1 = min(Nd, d_bin + dwin + 1)
+                r0 = max(0, r_bin - rwin)
+                r1 = min(Nr, r_bin + rwin + 1)
+
+                neighborhood = fft_db[d0:d1, r0:r1]
+
+                # local maximum test
+                if power < np.max(neighborhood):
+                    continue
+
+                candidates.append({
+                    'PRI_us': pri_us,
+                    'doppler_bin': int(d_bin - Nd // 2),
+                    'range_bin': int(r_bin),
+                    'power_dB': np.round(power,2),
+                })
 
     return candidates
 
@@ -369,11 +393,11 @@ def cfar_detection(RD_maps, candidates, fs, c, fc, dec, Tr, Td, Gr, Gd, offset_d
             folded_range = dec * (i_range / fs) * c / 2  # meters
           
             cand_out = cand.copy()
-            cand_out['doppler_freq'] = doppler_freq 
-            cand_out['velocity'] = velocity
-            cand_out['folded_range_km'] = folded_range / 1000
-            cand_out['CFAR_threshold_dB'] = threshold_dB
-            cand_out['CUT_dB'] = CUT_dB
+            cand_out['doppler_freq'] = np.round(doppler_freq,2) 
+            cand_out['velocity'] = np.round(velocity,2)
+            cand_out['folded_range_km'] = np.round(folded_range,2) / 1000
+            cand_out['CFAR_threshold_dB'] = np.round(threshold_dB,2)
+            cand_out['CUT_dB'] = np.round(CUT_dB,2)
             detections.append(cand_out)
 
     return detections
@@ -491,7 +515,7 @@ def main():
     DR = 50  # dynamic range in dB
     max_zones = 9 # max zones for Arange
     tol_km = 0.1  # tolerance for Arange (dictated by MF alignment)
-    TH1 = 1 # pre detection threshold   
+    TH1 = 13 # pre detection threshold   
     TH2 = 5 # CFAR threshold    
     
     # Targets
@@ -524,29 +548,28 @@ def main():
         RD_maps.update(RD_map)
     
     # Detection
-    candidates = pre_detection(RD_maps, pri_groups, fs, c, fc, TH1, dec)
+    candidates = pre_detection(RD_maps, pri_groups, fs, c, fc, TH1, dwin=2, rwin=3)
     print("\n--- Detected Pre Plots ---")
     print(tabulate(candidates, headers="keys", tablefmt="pretty", floatfmt=".2f")) 
-    # detections = cfar_detection(RD_maps, candidates, fs, c, fc, dec, Tr=3, Td=12, Gr=1, Gd=3, offset_dB=TH2)
-    # print("\n--- Detected Plots ---")
-    # print(tabulate(detections, headers="keys", tablefmt="pretty", floatfmt=".2f"))   
+    detections = cfar_detection(RD_maps, candidates, fs, c, fc, dec, Tr=3, Td=12, Gr=1, Gd=3, offset_dB=TH2)
+    print("\n--- Detected Plots ---")
+    print(tabulate(detections, headers="keys", tablefmt="pretty", floatfmt=".2f"))   
     
     # Plot maps from 5 cycles
-    # plot_rd_maps(RD_maps, DR, detections, candidates, dec)
-    plot_rd_maps(RD_maps, DR, [], candidates, dec) # plot maps without detection and association
+    plot_rd_maps(RD_maps, DR, detections, candidates, dec)
     
     # Association
-    # unfold_results = unfold_multiple_detections(detections, max_zones, fc, tol_km)
+    unfold_results = unfold_multiple_detections(detections, max_zones, fc, tol_km)
 
-    # print("\n--- Associated Targets ---")
-    # for res in unfold_results:
-    #     print(f"✅ Estimated range: {res['R_true']:.2f} km")
-    #     print(f"✅ Estiamted velocity: {res['Velocity']:.2f} m/s")
-    #     print(f"Used zone indices m: {res['zone_indices']}")
-    #     print("PRI to folded range association:")
-    #     for peak, r_true in zip(res['peaks'], res['r_true_list']):
-    #         print(f"  PRI: {peak['PRI_us']} µs folded {peak['folded_range_km']:.2f} km -> R_true: {r_true:.3f} km")
-    #     print("\n")
+    print("\n--- Associated Targets ---")
+    for res in unfold_results:
+        print(f"✅ Estimated range: {res['R_true']:.2f} km")
+        print(f"✅ Estiamted velocity: {res['Velocity']:.2f} m/s")
+        print(f"Used zone indices m: {res['zone_indices']}")
+        print("PRI to folded range association:")
+        for peak, r_true in zip(res['peaks'], res['r_true_list']):
+            print(f"  PRI: {peak['PRI_us']} µs folded {peak['folded_range_km']:.2f} km -> R_true: {r_true:.3f} km")
+        print("\n")
             
 # Run
 if __name__ == "__main__":
