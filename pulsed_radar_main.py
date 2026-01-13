@@ -13,9 +13,9 @@ c = 3e8
 def define_targets():
     return [
         (2000, 20, 1),
-        # (11500, 30, 1),
-        # (35000, -25, 1),
-        # (40000, 10, 1),
+        (10000, 30, 1),
+        (35000, -25, 1),
+        (40000, 0, 1),
     ]
 
 # --- Generate baseband pulse ---
@@ -503,7 +503,7 @@ def main():
     PRI_set = [39, 37, 34, 30.5, 27.5]  # µs
     Npulse = 2048 # number of pulses (slow time)
     Nrange = 1024 # range samples (fast time)
-    waveform = 'barker13' # waveform type
+    waveform = 'mls63' # waveform type
     fc = 34.5e9
     fs = 60e6 # Tx sampling rate is decimated (dec) for Rx
     dec = 3; # decimation factor for Rx
@@ -513,7 +513,7 @@ def main():
     
     # Detection and Association Params
     DR = 50  # dynamic range in dB
-    max_zones = 9 # max zones for Arange
+    max_zones = 12 # max zones for Arange
     tol_km = 0.1  # tolerance for Arange (dictated by MF alignment)
     TH1 = 13 # pre detection threshold   
     TH2 = 5 # CFAR threshold    
