@@ -1,231 +1,122 @@
-🧠 Overview:
+Multi-PRI Radar Signal Processing System for Range-Doppler Detection and Ambiguity Resolution
+Abstract
+This project implements a comprehensive radar signal processing pipeline designed to detect and track multiple targets while resolving range and velocity ambiguities inherent in pulsed radar systems. The system employs a multi-PRI (Pulse Repetition Interval) staggered waveform strategy operating at 34.5 GHz with configurable pulse compression waveforms including Barker codes, Linear Frequency Modulation (LFM), and Maximum Length Sequences (MLS).
+The processing chain encompasses several key stages: (1) baseband pulse generation with support for phase-coded and frequency-modulated waveforms; (2) radar echo simulation incorporating realistic target dynamics with range, velocity, and radar cross-section parameters; (3) signal decimation and matched filtering for pulse compression; (4) coherent integration via Doppler FFT to generate Range-Doppler maps for each PRI; (5) two-stage detection using threshold-based pre-detection followed by 2D Cell-Averaging CFAR (CA-CFAR) with configurable guard and training cells; and (6) multi-hypothesis association algorithm that resolves range ambiguities across multiple PRIs by testing zone combinations to determine true target range.
+The system demonstrates robust performance in detecting four simulated targets across a 40 km range span with velocities ranging from -25 to +30 m/s. The multi-PRI approach (39, 37, 34, 30.5, and 27.5 µs) enables unambiguous range and velocity measurements by exploiting the Chinese Remainder Theorem principle, where different PRIs create different folding patterns that can be uniquely resolved. The modular Python implementation separates waveform generation, signal processing, detection, association, and visualization into distinct modules, facilitating maintenance, testing, and future enhancements.
+Key technical specifications include: 60 MHz sampling rate with 3× decimation, 2048-pulse coherent processing intervals, configurable CFAR parameters (3 range training cells, 12 Doppler training cells, 10 dB threshold offset), and a maximum of 12 ambiguity zones for range unfolding with 100-meter tolerance. The system provides comprehensive visualization of Range-Doppler maps with detection overlays and detailed reporting of estimated target parameters including unfolded range and velocity.
+Keywords: Pulse-Doppler radar, multi-PRI waveforms, CFAR detection, range ambiguity resolution, matched filtering, coherent processing, target association, radar signal processing
 
-This Python script simulates a multi-PRI pulsed radar system using Barker-coded or LFM waveforms, generates synthetic echoes from defined targets, processes the data into Range–Doppler maps, performs detection            (CFAR), and then associates folded detections across different PRIs to estimate the true target range and velocity.
+Application Domains: Air surveillance radar, automotive radar, missile guidance systems, weather radar, and any pulsed-Doppler radar system requiring extended unambiguous range coverage.
+Technical Contributions:
 
-⚙️ Main Components:
-1. Target and Waveform Definition
+Multi-waveform pulse compression implementation (Barker-13, MLS-63, LFM)
+Integrated 2D CA-CFAR detector with candidate-based processing
+Multi-PRI association algorithm with exhaustive zone search
+Modular software architecture for radar signal processing research
 
-    define_targets() – defines target range (m), velocity (m/s), and RCS.
+Radar Processor Output:
+Processing PRI 1 = 39 µs
 
-    generate_pulse() – creates a complex baseband Barker code pulse or LFM at subcarrier frequency, sampled at fs.
+Processing PRI 2 = 37 µs
 
-2. Transmission and Reception Simulation
+Processing PRI 3 = 34 µs
 
-    build_tx_waveform() – builds the transmit signal for a given set of PRIs and number of pulses.
+Processing PRI 4 = 30.5 µs
 
-    simulate_rx_waveform() – generates a synthetic received signal by:
+Processing PRI 5 = 27.5 µs
 
-      Adding time-delayed, Doppler-shifted echoes for each target.
+--- Detected Pre Plots ---
++--------+-------------+-----------+----------+
+| PRI_us | doppler_bin | range_bin | power_dB |
++--------+-------------+-----------+----------+
+|  39.0  |    -459     |    767    |  80.01   |
+|  39.0  |      0      |    654    |  82.31   |
+|  39.0  |     367     |    267    |  79.76   |
+|  39.0  |     551     |    554    |  82.13   |
+|  37.0  |    -436     |    227    |  80.78   |
+|  37.0  |      0      |    154    |  81.99   |
+|  37.0  |     349     |    267    |  79.19   |
+|  37.0  |     523     |    594    |   81.7   |
+|  34.0  |    -400     |    587    |  78.09   |
+|  34.0  |      0      |    574    |  80.29   |
+|  34.0  |     320     |    267    |  78.93   |
+|  34.0  |     480     |    654    |  74.79   |
+|  30.5  |    -359     |    397    |  81.06   |
+|  30.5  |      0      |    454    |  81.47   |
+|  30.5  |     287     |    267    |  79.84   |
+|  30.5  |     431     |    114    |  81.49   |
+|  27.5  |    -324     |    267    |  80.81   |
+|  27.5  |      0      |    384    |  81.17   |
+|  27.5  |     259     |    267    |  81.13   |
+|  27.5  |     389     |    234    |  78.88   |
++--------+-------------+-----------+----------+
 
-      Injecting additive complex Gaussian noise.
+--- Detected Plots ---
++--------+-------------+-----------+----------+--------------+----------+-----------------+-------------------+--------+
+| PRI_us | doppler_bin | range_bin | power_dB | doppler_freq | velocity | folded_range_km | CFAR_threshold_dB | CUT_dB |
++--------+-------------+-----------+----------+--------------+----------+-----------------+-------------------+--------+
+|  39.0  |    -459     |    767    |  80.01   |   -5746.69   |  -24.99  |     5.7525      |       55.83       | 80.01  |
+|  39.0  |      0      |    654    |  82.31   |     0.0      |   0.0    |      4.905      |       47.87       | 82.31  |
+|  39.0  |     367     |    267    |  79.76   |   4594.85    |  19.98   |     2.0025      |       55.28       | 79.76  |
+|  39.0  |     551     |    554    |  82.13   |   6898.54    |  29.99   |      4.155      |       49.96       | 82.13  |
+|  37.0  |    -436     |    227    |  80.78   |   -5753.8    |  -25.02  |     1.7025      |       53.57       | 80.78  |
+|  37.0  |      0      |    154    |  81.99   |     0.0      |   0.0    |      1.155      |       47.59       | 81.99  |
+|  37.0  |     349     |    267    |  79.19   |   4605.68    |  20.02   |     2.0025      |       55.08       | 79.19  |
+|  37.0  |     523     |    594    |   81.7   |   6901.92    |  30.01   |      4.455      |       50.43       |  81.7  |
+|  34.0  |    -400     |    587    |  78.09   |   -5744.49   |  -24.98  |     4.4025      |       53.06       | 78.09  |
+|  34.0  |      0      |    574    |  80.29   |     0.0      |   0.0    |      4.305      |       45.92       | 80.29  |
+|  34.0  |     320     |    267    |  78.93   |   4595.59    |  19.98   |     2.0025      |       52.17       | 78.93  |
+|  34.0  |     480     |    654    |  74.79   |   6893.38    |  29.97   |      4.905      |       56.18       | 74.79  |
+|  30.5  |    -359     |    397    |  81.06   |   -5747.31   |  -24.99  |     2.9775      |       50.53       | 81.06  |
+|  30.5  |      0      |    454    |  81.47   |     0.0      |   0.0    |      3.405      |       47.1        | 81.47  |
+|  30.5  |     287     |    267    |  79.84   |   4594.65    |  19.98   |     2.0025      |       53.71       | 79.84  |
+|  30.5  |     431     |    114    |  81.49   |   6899.97    |   30.0   |      0.855      |       47.04       | 81.49  |
+|  27.5  |    -324     |    267    |  80.81   |   -5752.84   |  -25.01  |     2.0025      |       50.04       | 80.81  |
+|  27.5  |      0      |    384    |  81.17   |     0.0      |   0.0    |      2.88       |       46.85       | 81.17  |
+|  27.5  |     259     |    267    |  81.13   |   4598.72    |  19.99   |     2.0025      |       47.67       | 81.13  |
+|  27.5  |     389     |    234    |  78.88   |   6906.96    |  30.03   |      1.755      |       54.02       | 78.88  |
++--------+-------------+-----------+----------+--------------+----------+-----------------+-------------------+--------+
 
-3. Data Cube Formation
+--- Associated Targets ---
+✅ Estimated range: 35.00 km
+✅ Estimated velocity: -25.00 m/s
+Used zone indices m: (5, 6, 6, 7, 8)
+PRI to folded range association:
+  PRI: 39.0 µs folded 5.75 km -> R_true: 35.002 km
+  PRI: 37.0 µs folded 1.70 km -> R_true: 35.002 km
+  PRI: 34.0 µs folded 4.40 km -> R_true: 35.002 km
+  PRI: 30.5 µs folded 2.98 km -> R_true: 35.002 km
+  PRI: 27.5 µs folded 2.00 km -> R_true: 35.002 km
 
-    build_data_cube() – segments the received signal into pulses forming a 2D matrix (pulse × samples), preparing for FFT processing.
 
-4. Range–Doppler Processing
+✅ Estimated range: 40.01 km
+✅ Estimated velocity: 0.00 m/s
+Used zone indices m: (6, 7, 7, 8, 9)
+PRI to folded range association:
+  PRI: 39.0 µs folded 4.91 km -> R_true: 40.005 km
+  PRI: 37.0 µs folded 1.16 km -> R_true: 40.005 km
+  PRI: 34.0 µs folded 4.30 km -> R_true: 40.005 km
+  PRI: 30.5 µs folded 3.40 km -> R_true: 40.005 km
+  PRI: 27.5 µs folded 2.88 km -> R_true: 40.005 km
 
-    process_range_doppler() – performs:
 
-      Range compression via matched filtering (FFT-based correlation).
+✅ Estimated range: 2.00 km
+✅ Estimated velocity: 20.00 m/s
+Used zone indices m: (0, 0, 0, 0, 0)
+PRI to folded range association:
+  PRI: 39.0 µs folded 2.00 km -> R_true: 2.002 km
+  PRI: 37.0 µs folded 2.00 km -> R_true: 2.002 km
+  PRI: 34.0 µs folded 2.00 km -> R_true: 2.002 km
+  PRI: 30.5 µs folded 2.00 km -> R_true: 2.002 km
+  PRI: 27.5 µs folded 2.00 km -> R_true: 2.002 km
 
-      Doppler FFT to create a 2D Range–Doppler map for each PRI.
 
-      Outputs magnitude in dB, velocity, and range axes per PRI.
-
-5. Detection Stages
-
-    pre_detection() – simple thresholding to select strong candidate cells in the Range–Doppler map.
-
-    cfar_detection() – applies 2D CA-CFAR around candidate cells using training and guard windows.
-
-      Converts to linear scale, estimates noise level, and sets detection threshold.
-
-      Keeps detections where CUT > threshold.
-
-6. Visualization
-
-    plot_rd_maps() – displays Range–Doppler maps for all PRIs with overlaid pre-detections (yellow) and CFAR detections (red).
-
-7. Association / True Range Resolution
-
-    group_detections_by_doppler_freq() – groups detections with similar Doppler frequencies across PRIs.
-
-    resolve_true_range() – tests combinations of zone indices (range-folds) across PRIs using Chinese Remainder-like reasoning to find a consistent true range.
-
-    unfold_multiple_detections() – applies resolve_true_range() to all detection groups and reports final true range and velocity estimates.
-
-🚀 Main Routine (main())
-
-Defines radar parameters (PRIs, sampling rate, carrier frequency, thresholds, etc.).
-
-Simulates and processes each PRI sequentially.
-
-Performs pre-detection and CFAR detection.
-
-Displays Range–Doppler plots.
-
-Resolves folded detections to estimate the true target range and velocity.
-
-📊 Outputs
-
-Printed detection tables (before and after CFAR).
-
-Range–Doppler plots with detections.
-
-Final estimated true range and velocity of each target, including their PRI-to-range mapping consistency.
-
-    Processing PRI 1 = 44.5 µs
-
-    Processing PRI 2 = 40 µs
-    
-    Processing PRI 3 = 38 µs
-    
-    Processing PRI 4 = 34.5 µs
-    
-    Processing PRI 5 = 31 µs
-    
-    --- Detected Pre Plots ---
-    +--------+-------------+-----------+--------------------+
-    | PRI_us | doppler_bin | range_bin |      power_dB      |
-    +--------+-------------+-----------+--------------------+
-    |  44.5  |   -524.0    |    209    | 33.25339350203012  |
-    |  44.5  |   -524.0    |    212    | 30.751068726350645 |
-    |  44.5  |   -524.0    |    213    | 33.116651682376386 |
-    |  44.5  |   -524.0    |    216    | 43.42382501073354  |
-    |  44.5  |   -524.0    |    219    | 33.45837555154303  |
-    |  44.5  |   -524.0    |    220    |  30.9361887710762  |
-    |  44.5  |   -524.0    |    223    | 33.30716840746711  |
-    |  44.5  |     0.0     |    259    | 33.33447225454777  |
-    |  44.5  |     0.0     |    262    | 30.93607467327751  |
-    |  44.5  |     0.0     |    263    | 32.94388975607295  |
-    |  44.5  |     0.0     |    266    | 43.55428131387192  |
-    |  44.5  |     0.0     |    269    | 33.16925712646804  |
-    |  44.5  |     0.0     |    270    | 30.919763530625033 |
-    |  44.5  |     0.0     |    273    | 33.45954096283699  |
-    |  44.5  |    629.0    |    636    | 32.612208724911675 |
-    |  44.5  |    629.0    |    640    |  33.0317925303117  |
-    |  44.5  |    629.0    |    643    | 43.15001215072194  |
-    |  44.5  |    629.0    |    646    | 32.94342789249642  |
-    |  44.5  |    629.0    |    650    | 33.05574735991227  |
-    |  40.0  |   -471.0    |    671    | 39.531406319875146 |
-    |  40.0  |   -470.0    |    671    | 41.26909118549209  |
-    |  40.0  |   -469.0    |    671    | 31.341770949645237 |
-    |  40.0  |     0.0     |    259    | 33.95664676266894  |
-    |  40.0  |     0.0     |    262    | 31.79491841011586  |
-    |  40.0  |     0.0     |    263    | 33.78296471270241  |
-    |  40.0  |     0.0     |    266    |  44.3165294481011  |
-    |  40.0  |     0.0     |    269    | 34.08060717412664  |
-    |  40.0  |     0.0     |    270    | 31.67799369476421  |
-    |  40.0  |     0.0     |    273    | 34.32347234769849  |
-    |  40.0  |    564.0    |    734    | 39.49184529588458  |
-    |  40.0  |    565.0    |    734    |  41.1265423822031  |
-    |  38.0  |   -447.0    |    105    | 34.74004905658085  |
-    |  38.0  |   -447.0    |    108    | 32.122955302186455 |
-    |  38.0  |   -447.0    |    109    | 34.323872457929774 |
-    |  38.0  |   -447.0    |    112    | 44.70576470390615  |
-    |  38.0  |   -447.0    |    115    | 34.759290879649434 |
-    |  38.0  |   -447.0    |    116    | 31.926222032630992 |
-    |  38.0  |   -447.0    |    119    | 34.88663161849932  |
-    |  38.0  |     0.0     |    259    | 34.652782708525656 |
-    |  38.0  |     0.0     |    262    |  32.1334595984144  |
-    |  38.0  |     0.0     |    263    | 34.58179190054302  |
-    |  38.0  |     0.0     |    266    | 44.88025319564415  |
-    |  38.0  |     0.0     |    269    | 34.71873236491446  |
-    |  38.0  |     0.0     |    270    | 32.158225688131985 |
-    |  38.0  |     0.0     |    273    | 34.888369501329166 |
-    |  38.0  |    536.0    |     8     | 33.533958093312336 |
-    |  38.0  |    536.0    |    12     | 33.40204509611667  |
-    |  38.0  |    536.0    |    15     | 43.64171275228357  |
-    |  38.0  |    536.0    |    18     |  33.2163006735715  |
-    |  38.0  |    536.0    |    22     | 33.326989094380636 |
-    |  38.0  |    537.0    |    15     | 35.45748326989075  |
-    |  34.5  |   -407.0    |    526    | 36.10872411938506  |
-    |  34.5  |   -406.0    |    519    | 34.44937733050076  |
-    |  34.5  |   -406.0    |    523    | 34.28476342874937  |
-    |  34.5  |   -406.0    |    526    | 44.52580203447936  |
-    |  34.5  |   -406.0    |    529    | 34.239209969179136 |
-    |  34.5  |   -406.0    |    533    | 34.07457148509281  |
-    |  34.5  |     0.0     |    259    | 35.372675089767725 |
-    |  34.5  |     0.0     |    263    | 35.47358915378175  |
-    |  34.5  |     0.0     |    266    | 45.652295221612896 |
-    |  34.5  |     0.0     |    269    | 35.44919864851487  |
-    |  34.5  |     0.0     |    270    | 32.83299752848053  |
-    |  34.5  |     0.0     |    273    | 35.36723712861622  |
-    |  34.5  |    487.0    |    153    | 41.18525500360036  |
-    |  34.5  |    488.0    |    153    | 42.16107325940065  |
-    |  31.0  |   -365.0    |    319    | 36.39509619940604  |
-    |  31.0  |   -365.0    |    322    | 34.097336532406416 |
-    |  31.0  |   -365.0    |    323    |  36.1366404553491  |
-    |  31.0  |   -365.0    |    326    | 46.571314834898374 |
-    |  31.0  |   -365.0    |    329    | 36.34614934614437  |
-    |  31.0  |   -365.0    |    330    | 33.69356938152225  |
-    |  31.0  |   -365.0    |    333    |  36.0437164087378  |
-    |  31.0  |     0.0     |    259    | 36.583630975035874 |
-    |  31.0  |     0.0     |    262    | 33.988535856471515 |
-    |  31.0  |     0.0     |    263    | 36.459412077866496 |
-    |  31.0  |     0.0     |    266    | 46.65186923331167  |
-    |  31.0  |     0.0     |    269    | 36.33526931004241  |
-    |  31.0  |     0.0     |    273    | 36.429574319584034 |
-    |  31.0  |    438.0    |    286    | 36.43483211631895  |
-    |  31.0  |    438.0    |    289    | 34.019234435269205 |
-    |  31.0  |    438.0    |    290    | 36.19177158649522  |
-    |  31.0  |    438.0    |    293    | 46.565873325866384 |
-    |  31.0  |    438.0    |    296    | 36.32303845865335  |
-    |  31.0  |    438.0    |    297    | 33.75935660419667  |
-    |  31.0  |    438.0    |    300    | 36.21126209179734  |
-    +--------+-------------+-----------+--------------------+
-    
-    --- Detected Plots ---
-    +--------+-------------+-----------+--------------------+--------------------+---------------------+-----------------+--------------------+--------------------+
-    | PRI_us | doppler_bin | range_bin |      power_dB      |    doppler_freq    |      velocity       | folded_range_km | CFAR_threshold_dB  |       CUT_dB       |
-    +--------+-------------+-----------+--------------------+--------------------+---------------------+-----------------+--------------------+--------------------+
-    |  44.5  |   -524.0    |    216    | 43.42382501073354  | -5749.648876404494 | -24.998473375671715 |      1.62       | 39.198552456035145 | 43.42382501073354  |
-    |  44.5  |     0.0     |    266    | 43.55428131387192  |        0.0         |         0.0         |      1.995      | 39.181818991277694 | 43.55428131387192  |
-    |  44.5  |    629.0    |    643    | 43.15001215072194  | 6901.773174157303  |  30.00770945285784  |     4.8225      | 39.31028195702616  | 43.15001215072194  |
-    |  40.0  |   -470.0    |    671    | 41.26909118549209  | -5737.304687500001 | -24.944802989130437 |     5.0325      | 40.79089522139317  | 41.26909118549209  |
-    |  40.0  |     0.0     |    266    |  44.3165294481011  |        0.0         |         0.0         |      1.995      | 39.95531418804339  |  44.3165294481011  |
-    |  40.0  |    565.0    |    734    |  41.1265423822031  | 6896.972656250001  |  29.98683763586957  |      5.505      |  40.6181102757618  |  41.1265423822031  |
-    |  38.0  |   -447.0    |    112    | 44.70576470390615  | -5743.729440789474 | -24.97273669908467  |      0.84       | 40.74987158823647  | 44.70576470390615  |
-    |  38.0  |     0.0     |    266    | 44.88025319564415  |        0.0         |         0.0         |      1.995      | 40.602258367140024 | 44.88025319564415  |
-    |  34.5  |   -406.0    |    526    | 44.52580203447936  | -5746.150362318841 | -24.983262444864526 |      3.945      | 41.713381324004146 | 44.52580203447936  |
-    |  34.5  |     0.0     |    266    | 45.652295221612896 |        0.0         |         0.0         |      1.995      |  41.2598437979738  | 45.652295221612896 |
-    |  34.5  |    488.0    |    153    | 42.16107325940065  | 6906.702898550725  | 30.029143037177064  |     1.1475      | 41.88180192419297  | 42.16107325940065  |
-    |  31.0  |   -365.0    |    326    | 46.571314834898374 | -5749.117943548386 | -24.996164971949504 |      2.445      | 42.180152132296165 | 46.571314834898374 |
-    |  31.0  |     0.0     |    266    | 46.65186923331167  |        0.0         |         0.0         |      1.995      | 42.379084332111475 | 46.65186923331167  |
-    |  31.0  |    438.0    |    293    | 46.565873325866384 | 6898.941532258064  |  29.99539796633941  |     2.1975      | 42.137274727608315 | 46.565873325866384 |
-    +--------+-------------+-----------+--------------------+--------------------+---------------------+-----------------+--------------------+--------------------+
-    
-    --- Associated Targets ---
-    ✅ Estimated range: 35.01 km
-    ✅ Estiamted velocity: -25.00 m/s
-    Used zone indices m: (5, 5, 6, 6, 7)
-    PRI to folded range association:
-      PRI: 44.5 µs folded 1.62 km -> R_true: 34.995 km
-      PRI: 40.0 µs folded 5.03 km -> R_true: 35.032 km
-      PRI: 38.0 µs folded 0.84 km -> R_true: 35.040 km
-      PRI: 34.5 µs folded 3.94 km -> R_true: 34.995 km
-      PRI: 31.0 µs folded 2.44 km -> R_true: 34.995 km
-    
-    
-    ✅ Estimated range: 2.00 km
-    ✅ Estiamted velocity: 0.00 m/s
-    Used zone indices m: (0, 0, 0, 0, 0)
-    PRI to folded range association:
-      PRI: 44.5 µs folded 2.00 km -> R_true: 1.995 km
-      PRI: 40.0 µs folded 2.00 km -> R_true: 1.995 km
-      PRI: 38.0 µs folded 2.00 km -> R_true: 1.995 km
-      PRI: 34.5 µs folded 2.00 km -> R_true: 1.995 km
-      PRI: 31.0 µs folded 2.00 km -> R_true: 1.995 km
-    
-    
-    ✅ Estimated range: 11.50 km
-    ✅ Estiamted velocity: 30.00 m/s
-    Used zone indices m: (1, 1, 2, 2)
-    PRI to folded range association:
-      PRI: 44.5 µs folded 4.82 km -> R_true: 11.497 km
-      PRI: 40.0 µs folded 5.50 km -> R_true: 11.505 km
-      PRI: 34.5 µs folded 1.15 km -> R_true: 11.497 km
-      PRI: 31.0 µs folded 2.20 km -> R_true: 11.498 km
-<img width="1920" height="983" alt="image" src="https://github.com/user-attachments/assets/f3049230-aa06-468c-983a-f7734fa2c40e" />
-
+✅ Estimated range: 10.01 km
+✅ Estimated velocity: 30.00 m/s
+Used zone indices m: (1, 1, 1, 2, 2)
+PRI to folded range association:
+  PRI: 39.0 µs folded 4.16 km -> R_true: 10.005 km
+  PRI: 37.0 µs folded 4.46 km -> R_true: 10.005 km
+  PRI: 34.0 µs folded 4.91 km -> R_true: 10.005 km
+  PRI: 30.5 µs folded 0.85 km -> R_true: 10.005 km
+  PRI: 27.5 µs folded 1.75 km -> R_true: 10.005 km
