@@ -1,14 +1,18 @@
 Multi-PRI Radar Signal Processing System for Range-Doppler Detection and Ambiguity Resolution
 
-This project implements a comprehensive radar signal processing pipeline designed to detect and track multiple targets while resolving range and velocity ambiguities inherent in pulsed radar systems. The system employs a multi-PRI (Pulse Repetition Interval) staggered waveform strategy operating at 34.5 GHz with configurable pulse compression waveforms including Barker codes, Linear Frequency Modulation (LFM), and Maximum Length Sequences (MLS).
+This project implements a comprehensive radar signal processing pipeline designed to detect and track multiple targets while resolving range and velocity ambiguities inherent in pulsed radar systems.
+The system employs a multi-PRI (Pulse Repetition Interval) staggered waveform strategy operating at 34.5 GHz with configurable pulse compression waveforms including Barker codes, Linear Frequency Modulation (LFM), and Maximum Length Sequences (MLS).
 The processing chain encompasses several key stages: (1) baseband pulse generation with support for phase-coded and frequency-modulated waveforms; (2) radar echo simulation incorporating realistic target dynamics with range, velocity, and radar cross-section parameters; (3) signal decimation and matched filtering for pulse compression; (4) coherent integration via Doppler FFT to generate Range-Doppler maps for each PRI; (5) two-stage detection using threshold-based pre-detection followed by 2D Cell-Averaging CFAR (CA-CFAR) with configurable guard and training cells; and (6) multi-hypothesis association algorithm that resolves range ambiguities across multiple PRIs by testing zone combinations to determine true target range.
 The system demonstrates robust performance in detecting four simulated targets across a 40 km range span with velocities ranging from -25 to +30 m/s. The multi-PRI approach (39, 37, 34, 30.5, and 27.5 µs) enables unambiguous range and velocity measurements by exploiting the Chinese Remainder Theorem principle, where different PRIs create different folding patterns that can be uniquely resolved. The modular Python implementation separates waveform generation, signal processing, detection, association, and visualization into distinct modules, facilitating maintenance, testing, and future enhancements.
 Key technical specifications include: 60 MHz sampling rate with 3× decimation, 2048-pulse coherent processing intervals, configurable CFAR parameters (3 range training cells, 12 Doppler training cells, 10 dB threshold offset), and a maximum of 12 ambiguity zones for range unfolding with 100-meter tolerance. The system provides comprehensive visualization of Range-Doppler maps with detection overlays and detailed reporting of estimated target parameters including unfolded range and velocity.
-Keywords: Pulse-Doppler radar, multi-PRI waveforms, CFAR detection, range ambiguity resolution, matched filtering, coherent processing, target association, radar signal processing
 
-Application Domains: Air surveillance radar, automotive radar, missile guidance systems, weather radar, and any pulsed-Doppler radar system requiring extended unambiguous range coverage.
+Keywords:
+Pulse-Doppler radar, multi-PRI waveforms, CFAR detection, range ambiguity resolution, matched filtering, coherent processing, target association, radar signal processing.
+
+Application Domains:
+Air surveillance radar, automotive radar, missile guidance systems, weather radar, and any pulsed-Doppler radar system requiring extended unambiguous range coverage.
+
 Technical Contributions:
-
 Multi-waveform pulse compression implementation (Barker-13, MLS-63, LFM)
 Integrated 2D CA-CFAR detector with candidate-based processing
 Multi-PRI association algorithm with exhaustive zone search
