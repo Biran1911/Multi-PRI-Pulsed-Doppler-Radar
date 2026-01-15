@@ -142,12 +142,12 @@ def cfar_detection(RD_maps, candidates, fs, c, fc, dec, Tr, Td, Gr, Gd, offset_d
         if CUT_dB > threshold_dB:
             doppler_freq = np.fft.fftshift(np.fft.fftfreq(Nd, d=pri_us * 1e-6))[j_doppler]
             velocity = doppler_freq * c / (2 * fc)
-            folded_range = dec * (i_range / fs) * c / 2  # meters
+            folded_range = (dec * (i_range / fs) * c / 2)  # m
           
             cand_out = cand.copy()
             cand_out['doppler_freq'] = np.round(doppler_freq, 2) 
-            cand_out['velocity'] = np.round(velocity, 2)
-            cand_out['folded_range_km'] = np.round(folded_range, 2) / 1000
+            cand_out['amb_vel'] = np.round(velocity, 2)
+            cand_out['amb_rng'] = np.round(folded_range, 2)
             cand_out['CFAR_threshold_dB'] = np.round(threshold_dB, 2)
             cand_out['CUT_dB'] = np.round(CUT_dB, 2)
             detections.append(cand_out)

@@ -48,7 +48,7 @@ def group_detections_by_doppler_freq(detections, freq_tol_Hz=50):
     return reduced_groups
 
 
-def resolve_true_range(pris_us, folded_ranges_km, max_zones, tol_km):
+def resolve_true_range(pris_us, folded_ranges, max_zones, tol_m):
     """
     Resolve true range for a target folded across multiple PRIs,
     allowing different zone index (m) per PRI.
@@ -57,51 +57,51 @@ def resolve_true_range(pris_us, folded_ranges_km, max_zones, tol_km):
     ----------
     pris_us : list
         List of PRIs in microseconds
-    folded_ranges_km : list
-        List of measured folded ranges (in km)
+    folded_ranges : list
+        List of measured folded ranges (in m)
     max_zones : int
         Maximum number of zones to check for each PRI
-    tol_km : float
-        Tolerance in km for acceptable spread in computed R_true
+    tol_m : float
+        Tolerance in km for acceptable spread in computed filt_rng
 
     Returns
     -------
     dict with fields:
-        'R_true'       : Estimated true range (km)
+        'filt_rng'       : Estimated true range (m)
         'zone_indices' : List of m_i used for each PRI
-        'r_true_list'  : Computed R_true per PRI
-        'success'      : True if consistent R_true found, else False
+        'filt_rng_list'  : Computed filt_rng per PRI
+        'success'      : True if consistent filt_rng found, else False
     """
     c = 3e8
     N = len(pris_us)
 
     # Generate all possible m combinations
     for m_combo in product(range(max_zones), repeat=N):
-        r_true_list = []
+        filt_rng_list = []
         for i in range(N):
             pri_sec = pris_us[i] * 1e-6
-            R_fold_km = folded_ranges_km[i]
-            R_zone_km = m_combo[i] * (c * pri_sec / 2) * 1e-3
-            r_true = R_zone_km + R_fold_km
-            r_true_list.append(r_true)
+            R_fold_m = folded_ranges[i]
+            R_zone_m = m_combo[i] * (c * pri_sec / 2)
+            filt_rng = R_zone_m + R_fold_m
+            filt_rng_list.append(filt_rng)
 
-        if np.ptp(r_true_list) < tol_km:
+        if np.ptp(filt_rng_list) < tol_m:
             return {
-                'R_true': np.mean(r_true_list),
+                'filt_rng': np.mean(filt_rng_list),
                 'zone_indices': m_combo,
-                'r_true_list': r_true_list,
+                'filt_rng_list': filt_rng_list,
                 'success': True
             }
 
     return {
-        'R_true': None,
+        'filt_rng': None,
         'zone_indices': None,
-        'r_true_list': [],
+        'filt_rng_list': [],
         'success': False
     }
 
 
-def unfold_multiple_detections(detections, max_zones, fc, tol_km):
+def unfold_multiple_detections(detections, max_zones, fc, tol_m):
     """
     Unfold range ambiguities for multiple detections across PRIs.
     
@@ -113,8 +113,8 @@ def unfold_multiple_detections(detections, max_zones, fc, tol_km):
         Maximum number of ambiguity zones to check
     fc : float
         Carrier frequency [Hz]
-    tol_km : float
-        Range tolerance in km
+    tol_m : float
+        Range tolerance in m
         
     Returns
     -------
@@ -127,15 +127,15 @@ def unfold_multiple_detections(detections, max_zones, fc, tol_km):
 
     for doppler_freq, peaks in groups.items():
         pris_us = [p['PRI_us'] for p in peaks]
-        folded_ranges_km = [p['folded_range_km'] for p in peaks]
+        folded_ranges = [p['amb_rng'] for p in peaks]
 
-        result = resolve_true_range(pris_us, folded_ranges_km, max_zones, tol_km)
+        result = resolve_true_range(pris_us, folded_ranges, max_zones, tol_m)
         if result['success']:
             results.append({
-                'Velocity': (doppler_freq * c) / (2 * fc),
-                'R_true': result['R_true'],
+                'filt_vel': (doppler_freq * c) / (2 * fc),
+                'filt_rng': result['filt_rng'],
                 'zone_indices': result['zone_indices'],
-                'r_true_list': result['r_true_list'],
+                'filt_rng_list': result['filt_rng_list'],
                 'peaks': peaks
             })
 

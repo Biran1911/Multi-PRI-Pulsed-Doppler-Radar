@@ -44,11 +44,12 @@ def main():
     """
     Main execution function for radar processing pipeline.
     """
+    plt.close('all')
     # --- Waveform Parameters ---
     PRI_set = [39, 37, 34, 30.5, 27.5]  # µs
     Npulse = 2048  # number of pulses (slow time)
     Nrange = 1024  # range samples (fast time)
-    waveform = 'mls'  # waveform type
+    waveform = 'barker'  # waveform type
     fc = 34.5e9
     fs = 60e6  # Tx sampling rate
     dec = 3  # decimation factor for Rx
@@ -59,19 +60,18 @@ def main():
     # --- Detection and Association Parameters ---
     DR = 50  # dynamic range in dB
     max_zones = 12  # max zones for range unfolding
-    tol_km = 0.1  # tolerance for range association (km)
+    tol_m = 100  # tolerance for range association (meter)
     TH1 = 13  # pre detection threshold   
     TH2 = 10  # CFAR threshold    
     
-    # --- Target Definition ---
+    # ---- Target Definition
     targets = define_targets()
     
-    # --- Pulse Generation ---
+    # ---- Pulse Generation
     pulse = generate_pulse(fs, waveform, PWclks, f_start, f_end)
     
-    # --- Processing Loop ---
-    RD_maps = {}
-    
+    # ---- Processing Loop  
+    plot_manager = [] # allocate plots list
     for i, PRI in enumerate(PRI_set, start=1):
         print(f"\nProcessing PRI {i} = {PRI} µs")
         
@@ -93,36 +93,36 @@ def main():
         for j, pri_val in enumerate(PRIs):
             pri_groups[round(pri_val * 1e6, 1)].append(j)
             
-        # Process RD maps
-        RD_map = process_range_doppler(data_cube, PRIs, pri_groups, pulse, 
-                                       fs, c, fc, Nrange, dec)
-        RD_maps.update(RD_map)
+        # Process RD map (CPI)
+        RD_map = process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, Nrange, dec)
+        
+        # ---- Detection
+        pre_plots = pre_detection(RD_map, pri_groups, fs, c, fc, TH1, dwin=2, rwin=3)
+        print("\n--- Detected Pre Plots ---")
+        print(tabulate(pre_plots, headers="keys", tablefmt="pretty", floatfmt=".2f")) 
+        plots = cfar_detection(RD_map, pre_plots, fs, c, fc, dec, Tr=3, Td=12, Gr=1, Gd=3, offset_dB=TH2)
+        plot_manager.extend(plots)
+        print("\n--- Detected Plots ---")
+        print(tabulate(plot_manager, headers="keys", tablefmt="pretty", floatfmt=".2f"))   
+        
+        
+        # ---- Association
+        print('end debug')
+        
+        # ---- Visualization
+        # plot_rd_maps(RD_map, DR, plot_manager, pre_plots)
     
-    # --- Detection ---
-    candidates = pre_detection(RD_maps, pri_groups, fs, c, fc, TH1, 
-                              dwin=2, rwin=3)
-    print("\n--- Detected Pre Plots ---")
-    print(tabulate(candidates, headers="keys", tablefmt="pretty", floatfmt=".2f")) 
-    
-    detections = cfar_detection(RD_maps, candidates, fs, c, fc, dec, 
-                               Tr=3, Td=12, Gr=1, Gd=3, offset_dB=TH2)
-    print("\n--- Detected Plots ---")
-    print(tabulate(detections, headers="keys", tablefmt="pretty", floatfmt=".2f"))   
-    
-    # --- Visualization ---
-    plot_rd_maps(RD_maps, DR, detections, candidates, dec)
-    
-    # --- Association ---
-    unfold_results = unfold_multiple_detections(detections, max_zones, fc, tol_km)
+    # ---- Association
+    unfold_results = unfold_multiple_detections(plot_manager, max_zones, fc, tol_m=100)
 
     print("\n--- Associated Targets ---")
     for res in unfold_results:
-        print(f"✅ Estimated range: {res['R_true']:.2f} km")
-        print(f"✅ Estimated velocity: {res['Velocity']:.2f} m/s")
+        print(f"✅ Filtered range: {res['filt_rng']:.2f} m")
+        print(f"✅ Filtered velocity: {res['filt_vel']:.2f} m/s")
         print(f"Used zone indices m: {res['zone_indices']}")
         print("PRI to folded range association:")
-        for peak, r_true in zip(res['peaks'], res['r_true_list']):
-            print(f"  PRI: {peak['PRI_us']} µs folded {peak['folded_range_km']:.2f} km -> R_true: {r_true:.3f} km")
+        for peak, filt_rng in zip(res['peaks'], res['filt_rng_list']):
+            print(f"  PRI: {peak['PRI_us']} µs folded {peak['amb_rng']:.2f} km -> R_true: {filt_rng:.2f} m")
         print("\n")
 
 

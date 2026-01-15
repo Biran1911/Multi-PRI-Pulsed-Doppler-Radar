@@ -177,13 +177,14 @@ def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, Nrange,
         mf_nfft = group_data_dec.shape[1]
         pulse_dec = pulse[::dec]
         matched_filter = np.fft.fft(np.conj(pulse_dec[::-1]), n=mf_nfft)
+        # matched_filter = np.conj(pulse_dec[::-1])
         
         # Range compression
         compressed_dec = np.zeros((doppler_N, mf_nfft), dtype=complex)
+        # compressed_dec = np.zeros((doppler_N, len(matched_filter)+len(group_data_dec[1, :])-1), dtype=complex)
         for i in range(doppler_N):
-            compressed_dec[i, :] = np.fft.ifft(
-                np.fft.fft(group_data_dec[i, :]) * matched_filter
-            )
+            compressed_dec[i, :] = np.fft.ifft(np.fft.fft(group_data_dec[i, :]) * matched_filter)
+            # compressed_dec[i, :] = np.convolve(group_data_dec[i, :],matched_filter,mode='full')
         compressed_dec = np.roll(compressed_dec, -(len(pulse_dec)-1), axis=1)
         
         # Doppler FFT
