@@ -98,6 +98,7 @@ def cfar_detection(RD_maps, candidates, fs, c, fc, dec, Tr, Td, Gr, Gd, offset_d
     -------
     detections : list of dict
         Candidates that pass CFAR threshold
+    ['PRI_us', 'doppler_bin', 'range_bin', 'power_dB', 'doppler_freq', 'amb_vel', 'amb_rng', 'CFAR_threshold_dB', 'CUT_dB']
     """
     detections = []
 
@@ -151,5 +152,5 @@ def cfar_detection(RD_maps, candidates, fs, c, fc, dec, Tr, Td, Gr, Gd, offset_d
             cand_out['CFAR_threshold_dB'] = np.round(threshold_dB, 2)
             cand_out['CUT_dB'] = np.round(CUT_dB, 2)
             detections.append(cand_out)
-
+            
     return detections

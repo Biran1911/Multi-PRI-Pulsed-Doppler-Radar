@@ -100,40 +100,42 @@ def simulate_rx_waveform(tx_waveform, pulse, pulse_starts, pri_samples, PRIs, fs
 
     # --- Plant echoes for each target ---
     for rng, vel, rcs in targets:
-
         delay_time = 2 * rng / c
         delay_samples = int(np.round(delay_time * fs))
-
         doppler_shift = 2 * vel * fc / c
 
         for win in pulse_windows:
-
             pri_len = win['pri_samples']
-
-            # --------- IMPORTANT FIX ----------
-            # Fold delay into PRI
-            folded_delay = delay_samples % pri_len
-            # ----------------------------------
-
+            folded_delay = delay_samples % pri_len # Fold delay into PRI
             echo_sample_abs = win['tx_start'] + folded_delay
             echo_end_abs = echo_sample_abs + PW
-
             # RX window overlap
             echo_start = max(echo_sample_abs, win['rx_start'])
             echo_end   = min(echo_end_abs, win['rx_end'])
-
             n = echo_end - echo_start
-
             if n > 0:
-
                 rx_idx = win['rx_buffer_start'] + (echo_start - win['rx_start'])
-
                 t = np.arange(n)/fs + echo_start/fs
-
                 echo = rcs * pulse[:n] * np.exp(1j * 2*np.pi * doppler_shift * t)
-
                 rx_waveform[rx_idx:rx_idx+n] += echo
-
+    
+    # Add correlated clutter (zero Doppler)  
+    clutter_power_dB = 10
+    clutter_power = 10**(clutter_power_dB/10)
+    for win in pulse_windows:
+        rx_start = win['rx_buffer_start']
+        rx_len   = win['rx_len']
+        # One clutter realization per PRI
+        clutter = (np.random.randn(rx_len) + 1j*np.random.randn(rx_len))
+        clutter *= np.sqrt(clutter_power / np.mean(np.abs(clutter)**2))
+        rx_waveform[rx_start:rx_start+rx_len] += clutter*np.exp(1j * np.random.normal(0, 0.2))
+        
+    # Add thermal noise (AWGN)   
+    noise_power_dB = -60     # relative to echo amplitude=1
+    noise_power = 10**(noise_power_dB/10)
+    noise = (np.random.randn(len(rx_waveform)) + 1j*np.random.randn(len(rx_waveform))) * np.sqrt(noise_power/2)
+    rx_waveform += noise 
+    
     # ---- DEBUG rx_waveform
     # import matplotlib.pyplot as plt
     # # Matched filter (conjugate time-reversed pulse)
@@ -253,31 +255,31 @@ def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, dec):
         # ---- IFFT allocate range compression
         # compressed_dec = np.zeros((doppler_N, mf_nfft), dtype=complex)
         # ---- CONV allocate range compression
-        # compressed_dec = np.zeros((doppler_N, len(matched_filter)+len(group_data_dec[1, :])-1), dtype=complex)
-        compressed_dec = np.zeros((doppler_N, mf_nfft), dtype=complex)
+        compressed_dec = np.zeros((doppler_N, len(matched_filter)+len(group_data_dec[1, :])-1), dtype=complex)
+        # compressed_dec = np.zeros((doppler_N, mf_nfft), dtype=complex) (depending on conv mode)
         for i in range(doppler_N):
             # ---- IFFT range compression
             # compressed_dec[i, :] = np.fft.ifft(np.fft.fft(group_data_dec[i, :]) * matched_filter)
             # ---- CONV range compression
-            compressed_dec[i, :] = np.convolve(group_data_dec[i, :], matched_filter, mode='same')
-        # Match filter alignment
-        # compressed_dec = np.roll(compressed_dec, -(len(pulse_dec)-1), axis=1) 
+            compressed_dec[i, :] = np.convolve(group_data_dec[i, :], matched_filter, mode='full')
         
-        # ---- DEBUG MAP FOR ELI FW
-        # max_val = np.max(np.abs(compressed_dec))
+        # Match filter alignment (depending on conv mode)
+        compressed_dec = np.roll(compressed_dec, 1, axis=1) 
+        
+        # ---- DEBUG DATA CUBE FOR ELI
+        # max_val = np.max(np.abs(group_data_dec))
         # if max_val == 0:
         #     scale = 1.0
         # else:
         #     scale = 2047 / max_val
        
-        # compressed_dec_scaled = compressed_dec * scale
-        # I = np.real(compressed_dec_scaled)
-        # Q = np.imag(compressed_dec_scaled)
+        # group_data_dec_scaled = group_data_dec * scale
+        # I = np.real(group_data_dec_scaled)
+        # Q = np.imag(group_data_dec_scaled)
         # I_q = np.round(I).astype(np.int16)
         # Q_q = np.round(Q).astype(np.int16)
         # I_q = np.clip(I_q, -2048, 2047)
         # Q_q = np.clip(Q_q, -2048, 2047)
-           
         
         # Doppler FFT
         fft_data = np.fft.fftshift(np.fft.fft(compressed_dec, axis=0), axes=0)

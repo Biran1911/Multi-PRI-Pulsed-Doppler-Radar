@@ -87,13 +87,13 @@ def plot_rd_maps(RD_maps, DR, detections, pre_candidates):
         if pri_us in pre_by_pri:
             for p in pre_by_pri[pri_us]:
                 ax.plot(p['doppler_bin'],
-                        p['range_bin'], 'yo', mfc='none', markersize=8, label='Pre-detect')
+                        p['range_bin'], 'yo', mfc='none', markersize=9, label='Pre-detect')
         
         # Plot CFAR detections (if any)
         if pri_us in det_by_pri:
             for d in det_by_pri[pri_us]:
                 ax.plot(d['doppler_bin'],
-                        d['range_bin'], 'ro', mfc='none', markersize=10, label='CFAR')
+                        d['range_bin'], 'ro', mfc='none', markersize=11, label='CFAR')
         
         # Set title based on whether it's a single map or multiple
         if pri_us == 'Single':
