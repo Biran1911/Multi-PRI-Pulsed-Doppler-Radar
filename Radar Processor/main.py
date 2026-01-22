@@ -18,8 +18,7 @@ from signal_processing import (
     process_range_doppler
 )
 from detection import pre_detection, cfar_detection
-from association import (
-    TargetManager,
+from association import ( 
     unfold_targets_from_plot_manager,
     update_target_manager
 )
@@ -36,10 +35,10 @@ def define_targets():
     Define target parameters: (range_m, velocity_m/s, rcs)
     """
     return [
-        (1000, 10, 1),
-        (2000, 20, 1),
-        (3000, 30, 1),
-        # (40000, 30, 1),
+        # (1000, 10, 1),
+        # (2000, 20, 1),
+        # (3000, 30, 1),
+        (40000, 80, 1),
     ]
 
 
@@ -74,7 +73,7 @@ def main():
     # ---- Processing Loop  
     pre_plots = [] # allocate plots list
     plot_manager = [] # allocate plots list
-    target_manager = TargetManager() # allocate targets class
+    target_manager = [] # allocate targets list
     track_manager = [] # allocate track list
     cycle_idx = 0 # main loop cycle index (CPI time)
     
@@ -110,20 +109,23 @@ def main():
         # ---- Visualization
         plot_rd_maps(RD_map, DR, plot_manager, pre_plots)
         
-        # ---- Association
+        # ---- Plot Association
         cycle_idx += 1 # new CPI index
         targets = unfold_targets_from_plot_manager(plots, fc=fc, r_tol=50.0, v_tol=2.0, min_pri_support=1)
-        update_target_manager(target_manager, targets, cycle_idx, r_gate=100.0, v_gate=5.0, confirm_threshold=3, delete_threshold=5)
+        update_target_manager(target_manager, targets, cycle_idx)
         print("\n--- Associated Targets ---")
         for Trgt in target_manager:
             print(
-                f"🎯 ID={Trgt.id:2d} | "
-                f"R={Trgt.filt_rng:9.1f} m | "
-                f"V={Trgt.filt_vel:7.2f} m/s | "
-                f"P={Trgt.power_dB:6.1f} dB | "
-                f"hits={Trgt.hits:2d} | "
-                f"age={Trgt.age:2d}"
+                f"🎯 ID={Trgt['id']:2d} | "
+                f"R={Trgt['filt_rng']:9.1f} m | "
+                f"V={Trgt['filt_vel']:7.2f} m/s | "
+                f"P={Trgt['power_dB']:6.1f} dB | "
+                f"hits={Trgt['hits']:2d} | "
+                f"age={Trgt['age']:2d}"
             )
-
+            
+    # ---- Track Association
+    print("debug")
+        
 if __name__ == "__main__":
     main()
