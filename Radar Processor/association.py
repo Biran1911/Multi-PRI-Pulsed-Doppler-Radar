@@ -7,136 +7,173 @@ Association module for target tracking and range unfolding.
 """
 import numpy as np
 from collections import defaultdict
-from itertools import product
 
 
-def group_detections_by_doppler_freq(detections, freq_tol_Hz=50):
+def group_plots_by_pri(plot_manager):
     """
-    Group detected peaks by Doppler frequency (not bin index),
-    merging close frequencies within freq_tol_Hz.
-    
-    Parameters
-    ----------
-    detections : list
-        List of detection dictionaries
-    freq_tol_Hz : float
-        Frequency tolerance in Hz for grouping
-        
-    Returns
-    -------
-    reduced_groups : dict
-        Dictionary mapping frequency keys to detection lists
+    Groups detections by PRI_us.
     """
-    groups = defaultdict(list)
+    grouped = defaultdict(list)
 
-    for detection in detections:
-        freq = detection['doppler_freq']
-        freq_key = round(freq / freq_tol_Hz) * freq_tol_Hz
-        groups[freq_key].append(detection)
+    for plot in plot_manager:
+        grouped[plot["PRI_us"]].append(plot)
 
-    # Reduce to one peak per PRI per Doppler frequency (max power)
-    reduced_groups = defaultdict(list)
-    for freq_key, peaks in groups.items():
-        by_pri = defaultdict(list)
-        for p in peaks:
-            by_pri[p['PRI_us']].append(p)
-        # keep strongest per PRI
-        for pri, plist in by_pri.items():
-            best = max(plist, key=lambda x: x['power_dB'])
-            reduced_groups[freq_key].append(best)
-            
-    return reduced_groups
+    return grouped
 
-
-def resolve_true_range(pris_us, folded_ranges, max_zones, tol_m):
+def generate_unfold_hypotheses_from_plots(plot_manager, fc, max_range_zones=12, vel_zones=(-1, 0, 1)):
     """
-    Resolve true range for a target folded across multiple PRIs,
-    allowing different zone index (m) per PRI.
-
-    Parameters
-    ----------
-    pris_us : list
-        List of PRIs in microseconds
-    folded_ranges : list
-        List of measured folded ranges (in m)
-    max_zones : int
-        Maximum number of zones to check for each PRI
-    tol_m : float
-        Tolerance in km for acceptable spread in computed filt_rng
-
-    Returns
-    -------
-    dict with fields:
-        'filt_rng'       : Estimated true range (m)
-        'zone_indices' : List of m_i used for each PRI
-        'filt_rng_list'  : Computed filt_rng per PRI
-        'success'      : True if consistent filt_rng found, else False
+    Generates unfolded (R, V) hypotheses from plot_manager.
     """
-    c = 3e8
-    N = len(pris_us)
+    c = 3e8;
+    lam = c / fc
+    plots_by_pri = group_plots_by_pri(plot_manager)
 
-    # Generate all possible m combinations
-    for m_combo in product(range(max_zones), repeat=N):
-        filt_rng_list = []
-        for i in range(N):
-            pri_sec = pris_us[i] * 1e-6
-            R_fold_m = folded_ranges[i]
-            R_zone_m = m_combo[i] * (c * pri_sec / 2)
-            filt_rng = R_zone_m + R_fold_m
-            filt_rng_list.append(filt_rng)
+    hypotheses = []
 
-        if np.ptp(filt_rng_list) < tol_m:
-            return {
-                'filt_rng': np.mean(filt_rng_list),
-                'zone_indices': m_combo,
-                'filt_rng_list': filt_rng_list,
-                'success': True
-            }
+    for PRI_us, plots in plots_by_pri.items():
+        PRI = PRI_us * 1e-6
+        Ru = c * PRI / 2
+        Vu = lam / (2 * PRI)
 
-    return {
-        'filt_rng': None,
-        'zone_indices': None,
-        'filt_rng_list': [],
-        'success': False
-    }
+        for plot in plots:
+            amb_rng = plot["amb_rng"]
+            amb_vel = plot["amb_vel"]
 
+            for k in range(max_range_zones):
+                for m in vel_zones:
+                    hypotheses.append({
+                        "PRI_us": PRI_us,
+                        "R": amb_rng + k * Ru,
+                        "V": amb_vel + m * Vu,
+                        "CUT_dB": plot["CUT_dB"],
+                        "plot": plot   # back-reference
+                    })
 
-def unfold_multiple_detections(detections, max_zones, fc, tol_m):
+    return hypotheses
+
+def associate_unfolded_targets(hypotheses, r_tol=50.0, v_tol=2.0, min_pri_support=3):
     """
-    Unfold range ambiguities for multiple detections across PRIs.
-    
-    Parameters
-    ----------
-    detections : list
-        List of detection dictionaries
-    max_zones : int
-        Maximum number of ambiguity zones to check
-    fc : float
-        Carrier frequency [Hz]
-    tol_m : float
-        Range tolerance in m
-        
-    Returns
-    -------
-    results : list
-        List of unfolded target results
+    Associates unfolded hypotheses into targets.
     """
-    c = 3e8
-    groups = group_detections_by_doppler_freq(detections)
-    results = []
+    clusters = []
 
-    for doppler_freq, peaks in groups.items():
-        pris_us = [p['PRI_us'] for p in peaks]
-        folded_ranges = [p['amb_rng'] for p in peaks]
+    for h in hypotheses:
+        assigned = False
 
-        result = resolve_true_range(pris_us, folded_ranges, max_zones, tol_m)
-        if result['success']:
-            results.append({
-                'filt_vel': (doppler_freq * c) / (2 * fc),
-                'filt_rng': result['filt_rng'],
-                'zone_indices': result['zone_indices'],
-                'filt_rng_list': result['filt_rng_list'],
-                'peaks': peaks
+        for c in clusters:
+            if h["PRI_us"] in c["PRI_us_set"]:
+                continue
+
+            if (abs(h["R"] - c["R_mean"]) < r_tol and
+                abs(h["V"] - c["V_mean"]) < v_tol):
+
+                c["members"].append(h)
+                c["PRI_us_set"].add(h["PRI_us"])
+
+                weights = [10**(m["CUT_dB"]/10) for m in c["members"]]
+                c["R_mean"] = np.average([m["R"] for m in c["members"]], weights=weights)
+                c["V_mean"] = np.average([m["V"] for m in c["members"]], weights=weights)
+
+                assigned = True
+                break
+
+        if not assigned:
+            clusters.append({
+                "members": [h],
+                "PRI_us_set": {h["PRI_us"]},
+                "R_mean": h["R"],
+                "V_mean": h["V"]
             })
 
-    return results
+    # Filter valid unfolded targets
+    targets = []
+    for c in clusters:
+        if len(c["PRI_us_set"]) >= min_pri_support:
+            targets.append({
+                "filt_rng": c["R_mean"],
+                "filt_vel": c["V_mean"],
+                "num_pri": len(c["PRI_us_set"]),
+                "mean_power_dB": np.mean([m["CUT_dB"] for m in c["members"]]),
+                "supporting_plots": [m["plot"] for m in c["members"]]
+            })
+
+    return targets
+
+def unfold_targets_from_plot_manager(plot_manager, fc, r_tol=50.0, v_tol=2.0, min_pri_support=3):
+    """
+    Full unfolding pipeline from plot_manager.
+    """
+    hypotheses = generate_unfold_hypotheses_from_plots(plot_manager, fc)
+
+    targets = associate_unfolded_targets(
+        hypotheses,
+        r_tol=r_tol,
+        v_tol=v_tol,
+        min_pri_support=min_pri_support)
+
+    return targets
+
+def update_target_manager(target_manager, unfolded_targets, cycle_idx, r_gate=150.0, v_gate=5.0, max_missed=3):
+    """
+    Updates persistent targets with newly unfolded targets.
+    """
+    assigned = set()
+
+    # --- Update existing targets ---
+    for tgt in target_manager:
+        best = None
+        best_dist = np.inf
+
+        for i, meas in enumerate(unfolded_targets):
+            if i in assigned:
+                continue
+
+            dr = abs(meas["filt_rng"] - tgt["filt_rng"])
+            dv = abs(meas["filt_vel"] - tgt["filt_vel"])
+
+            if dr < r_gate and dv < v_gate:
+                dist = dr + 10 * dv
+                if dist < best_dist:
+                    best = i
+                    best_dist = dist
+
+        if best is not None:
+            meas = unfolded_targets[best]
+
+            # simple exponential smoothing
+            alpha = 0.4
+            tgt["filt_rng"] = (1 - alpha) * tgt["filt_rng"] + alpha * meas["filt_rng"]
+            tgt["filt_vel"] = (1 - alpha) * tgt["filt_vel"] + alpha * meas["filt_vel"]
+            tgt["power_dB"] = meas["mean_power_dB"]
+
+            tgt["last_update"] = cycle_idx
+            tgt["hits"] += 1
+            tgt["age"] += 1
+
+            assigned.add(best)
+        else:
+            tgt["age"] += 1
+
+    # --- Initiate new targets ---
+    next_id = max([t["id"] for t in target_manager], default=0) + 1
+
+    for i, meas in enumerate(unfolded_targets):
+        if i in assigned:
+            continue
+
+        target_manager.append({
+            "id": next_id,
+            "filt_rng": meas["filt_rng"],
+            "filt_vel": meas["filt_vel"],
+            "power_dB": meas["mean_power_dB"],
+            "last_update": cycle_idx,
+            "age": 1,
+            "hits": 1
+        })
+        next_id += 1
+
+    # --- Prune stale targets ---
+    target_manager[:] = [
+        t for t in target_manager
+        if cycle_idx - t["last_update"] <= max_missed
+    ]

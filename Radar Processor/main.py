@@ -19,7 +19,10 @@ from signal_processing import (
     process_range_doppler
 )
 from detection import pre_detection, cfar_detection
-from association import unfold_multiple_detections
+from association import ( 
+    unfold_targets_from_plot_manager,
+    update_target_manager
+)
 from visualization import plot_rd_maps
 
 plt.close('all')
@@ -33,10 +36,10 @@ def define_targets():
     Define target parameters: (range_m, velocity_m/s, rcs)
     """
     return [
+        (1000, 10, 1),
         (2000, 20, 1),
-        (10000, 30, 1),
-        (35000, -25, 1),
-        (40000, 0, 1),
+        (19000, 25, 1),
+        (40000, 30, 1),
     ]
 
 
@@ -47,21 +50,21 @@ def main():
     plt.close('all')
     # --- Waveform Parameters ---
     PRI_set = [39, 37, 34, 30.5, 27.5]  # µs
+    # PRI_set = [40, 40, 40, 40, 40]  # µs
     Npulse = 2048  # number of pulses (slow time)
-    Nrange = 1024  # range samples (fast time)
     waveform = 'barker'  # waveform type
     fc = 34.5e9
     fs = 60e6  # Tx sampling rate
-    dec = 3  # decimation factor for Rx
+    dec = 1  # decimation factor for Rx
     f_start = -fs/1e6  # LFM start frequency
     f_end = +fs/1e6  # LFM end frequency
-    PWclks = 360  # PW in clocks
+    PWclks = 256  # PW in clocks
     
     # --- Detection and Association Parameters ---
     DR = 50  # dynamic range in dB
     max_zones = 12  # max zones for range unfolding
     tol_m = 100  # tolerance for range association (meter)
-    TH1 = 13  # pre detection threshold   
+    TH1 = 15  # pre detection threshold   
     TH2 = 10  # CFAR threshold    
     
     # ---- Target Definition
@@ -71,22 +74,23 @@ def main():
     pulse = generate_pulse(fs, waveform, PWclks, f_start, f_end)
     
     # ---- Processing Loop  
+    pre_plots = [] # allocate plots list
     plot_manager = [] # allocate plots list
+    target_manager = [] # allocate targets list
+    track_manager = [] # allocate track list
+    cycle_idx = 0 # main loop cycle index (CPI time)
+    
     for i, PRI in enumerate(PRI_set, start=1):
         print(f"\nProcessing PRI {i} = {PRI} µs")
         
         # TX waveform
-        tx_waveform, pulse_starts, pri_samples, PRIs, total_samples = \
-            build_tx_waveform(pulse, [PRI], fs, Npulse)
+        tx_waveform, pulse_starts, pri_samples, PRIs, total_samples = build_tx_waveform(pulse, [PRI], fs, Npulse)
 
         # RX signal with targets
-        rx_waveform, pulse_windows = \
-            simulate_rx_waveform(tx_waveform, pulse, pulse_starts, 
-                                pri_samples, PRIs, fs, fc, targets)
+        rx_waveform, pulse_windows = simulate_rx_waveform(tx_waveform, pulse, pulse_starts, pri_samples, PRIs, fs, fc, targets)
         
         # Data cube
-        data_cube, max_samples = \
-            build_data_cube(rx_waveform, pulse_starts, pri_samples, Nrange, dec)
+        data_cube, max_samples = build_data_cube(rx_waveform, pulse_windows)
 
         # PRI grouping
         pri_groups = defaultdict(list)
@@ -94,36 +98,34 @@ def main():
             pri_groups[round(pri_val * 1e6, 1)].append(j)
             
         # Process RD map (CPI)
-        RD_map = process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, Nrange, dec)
+        RD_map = process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, dec)
         
         # ---- Detection
-        pre_plots = pre_detection(RD_map, pri_groups, fs, c, fc, TH1, dwin=2, rwin=3)
-        print("\n--- Detected Pre Plots ---")
-        print(tabulate(pre_plots, headers="keys", tablefmt="pretty", floatfmt=".2f")) 
-        plots = cfar_detection(RD_map, pre_plots, fs, c, fc, dec, Tr=3, Td=12, Gr=1, Gd=3, offset_dB=TH2)
-        plot_manager.extend(plots)
-        print("\n--- Detected Plots ---")
-        print(tabulate(plot_manager, headers="keys", tablefmt="pretty", floatfmt=".2f"))   
-        
-        
-        # ---- Association
-        print('end debug')
+        # pre_plots = pre_detection(RD_map, pri_groups, fs, c, fc, TH1, dwin=2, rwin=3)
+        # print("\n--- Detected Pre Plots ---")
+        # print(tabulate(pre_plots, headers="keys", tablefmt="pretty", floatfmt=".2f")) 
+        # plots = cfar_detection(RD_map, pre_plots, fs, c, fc, dec, Tr=3, Td=12, Gr=1, Gd=3, offset_dB=TH2)
+        # plot_manager.extend(plots)
+        # print("\n--- Detected Plots ---")
+        # print(tabulate(plot_manager, headers="keys", tablefmt="pretty", floatfmt=".2f"))   
         
         # ---- Visualization
-        # plot_rd_maps(RD_map, DR, plot_manager, pre_plots)
-    
-    # ---- Association
-    unfold_results = unfold_multiple_detections(plot_manager, max_zones, fc, tol_m=100)
-
-    print("\n--- Associated Targets ---")
-    for res in unfold_results:
-        print(f"✅ Filtered range: {res['filt_rng']:.2f} m")
-        print(f"✅ Filtered velocity: {res['filt_vel']:.2f} m/s")
-        print(f"Used zone indices m: {res['zone_indices']}")
-        print("PRI to folded range association:")
-        for peak, filt_rng in zip(res['peaks'], res['filt_rng_list']):
-            print(f"  PRI: {peak['PRI_us']} µs folded {peak['amb_rng']:.2f} km -> R_true: {filt_rng:.2f} m")
-        print("\n")
+    plot_rd_maps(RD_map, DR, plot_manager, pre_plots)
+        
+        # ---- Association
+        # cycle_idx += 1 # new CPI index
+    # targets = unfold_targets_from_plot_manager(plot_manager=plot_manager, fc=fc, r_tol=50.0, v_tol=2.0, min_pri_support=3)
+    # update_target_manager(target_manager, targets, cycle_idx)
+    # print("\n--- Associated Targets ---")
+    # for Trgt in target_manager:
+    #     print(
+    #         f"🎯 ID={Trgt['id']:2d} | "
+    #         f"R={Trgt['filt_rng']:9.1f} m | "
+    #         f"V={Trgt['filt_vel']:7.2f} m/s | "
+    #         f"P={Trgt['power_dB']:6.1f} dB | "
+    #         f"hits={Trgt['hits']:2d} | "
+    #         f"age={Trgt['age']:2d}"
+    #     )
 
 
 if __name__ == "__main__":

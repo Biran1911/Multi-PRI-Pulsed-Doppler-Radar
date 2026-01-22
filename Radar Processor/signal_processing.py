@@ -6,8 +6,6 @@ Created on Wed Jan 14 18:47:50 2026
 Signal processing module for radar waveform generation and simulation.
 """
 import numpy as np
-from collections import defaultdict
-
 
 def build_tx_waveform(pulse, PRI_set, fs, Npulse):
     """
@@ -42,97 +40,169 @@ def build_tx_waveform(pulse, PRI_set, fs, Npulse):
 
     return tx_waveform, pulse_starts, pri_samples, PRIs, total_samples
 
-
 def simulate_rx_waveform(tx_waveform, pulse, pulse_starts, pri_samples, PRIs, fs, fc, targets):
     """
-    Simulate received waveform with injected echoes from targets.
-    
+    Simulate received waveform in FPGA-style RX windows (RX window = PRI minus pulse width).
+    Handles targets beyond unambiguous range and partial overlap with RX windows.
+
     Parameters
     ----------
     tx_waveform : ndarray
-        Transmit waveform
+        Full TX waveform (reference)
     pulse : ndarray
         Pulse waveform
-    pulse_starts : list
-        Sample indices where pulses start
-    pri_samples : list
+    pulse_starts : list or ndarray
+        Sample indices where TX pulses start
+    pri_samples : list or ndarray
         Number of samples per PRI
-    PRIs : ndarray
+    PRIs : list or ndarray
         PRI values in seconds
     fs : float
         Sampling frequency [Hz]
     fc : float
         Carrier frequency [Hz]
-    targets : list
-        List of (range, velocity, rcs) tuples
-        
+    targets : list of tuples
+        Each target as (range_m, velocity_m_s, rcs)
+
     Returns
     -------
-    tuple : (rx_waveform, pulse_windows)
+    rx_waveform : ndarray
+        Concatenated RX waveform from all RX windows
+    pulse_windows : list of dicts
+        Metadata for each PRI (TX start, RX start/end, RX buffer indices)
     """
     c = 3e8
-    total_samples = len(tx_waveform)
-    rx_waveform = np.zeros(total_samples, dtype=complex)
+    PW = len(pulse)
 
+    # --- Build RX windows metadata ---
     pulse_windows = []
-    for i, (start, n_samples, pri_val) in enumerate(zip(pulse_starts, pri_samples, PRIs)):
-        start_time = start / fs
-        end_time = (start + n_samples) / fs
+    total_rx_samples = 0
+    for i, (tx_start, pri_len, pri_val) in enumerate(zip(pulse_starts, pri_samples, PRIs)):
+        rx_start = tx_start + PW
+        rx_end   = tx_start + pri_len
+        rx_len   = pri_len - PW
+        if rx_len <= 0:
+            raise ValueError("RX window <= 0")
         pulse_windows.append({
-            'start_time': start_time,
-            'end_time': end_time,
-            'start_sample': start,
+            'index': i,
+            'tx_start': tx_start,
+            'rx_start': rx_start,
+            'rx_end': rx_end,
+            'rx_len': rx_len,
+            'rx_buffer_start': total_rx_samples,
             'pri_us': round(pri_val * 1e6, 1),
-            'index': i
+            'pri_samples': pri_len
         })
+        total_rx_samples += rx_len
 
+    # --- Initialize concatenated RX waveform buffer ---
+    rx_waveform = np.zeros(total_rx_samples, dtype=complex)
+
+    # --- Plant echoes for each target ---
     for rng, vel, rcs in targets:
+
         delay_time = 2 * rng / c
+        delay_samples = int(np.round(delay_time * fs))
+
         doppler_shift = 2 * vel * fc / c
 
-        for tx_idx, tx_sample in enumerate(pulse_starts):
-            delay_samples = int(delay_time * fs)
-            echo_sample = tx_sample + delay_samples
-            
-            if echo_sample + len(pulse) < total_samples:
-                t = np.arange(len(pulse)) / fs + (echo_sample / fs)
-                echo = rcs * pulse * np.exp(1j * 2 * np.pi * doppler_shift * t)
-                rx_waveform[echo_sample:echo_sample + len(pulse)] += echo
+        for win in pulse_windows:
 
+            pri_len = win['pri_samples']
+
+            # --------- IMPORTANT FIX ----------
+            # Fold delay into PRI
+            folded_delay = delay_samples % pri_len
+            # ----------------------------------
+
+            echo_sample_abs = win['tx_start'] + folded_delay
+            echo_end_abs = echo_sample_abs + PW
+
+            # RX window overlap
+            echo_start = max(echo_sample_abs, win['rx_start'])
+            echo_end   = min(echo_end_abs, win['rx_end'])
+
+            n = echo_end - echo_start
+
+            if n > 0:
+
+                rx_idx = win['rx_buffer_start'] + (echo_start - win['rx_start'])
+
+                t = np.arange(n)/fs + echo_start/fs
+
+                echo = rcs * pulse[:n] * np.exp(1j * 2*np.pi * doppler_shift * t)
+
+                rx_waveform[rx_idx:rx_idx+n] += echo
+
+    # ---- DEBUG rx_waveform
+    # import matplotlib.pyplot as plt
+    # # Matched filter (conjugate time-reversed pulse)
+    # mf = np.conj(pulse[::-1])
+
+    # # Plot match filter response for first PRI only (optional)
+    # first_win = pulse_windows[0]
+    # rx_segment = rx_waveform[first_win['rx_buffer_start']:first_win['rx_buffer_start'] + first_win['rx_len']]
+    # mf_response = np.abs(np.fft.ifft(np.fft.fft(rx_segment, n=2*len(rx_segment)) * np.fft.fft(mf, n=2*len(rx_segment))))
+
+    # plt.figure(figsize=(10,4))
+    # plt.plot(mf_response)
+    # plt.title("Matched Filter Response (First PRI RX Window)")
+    # plt.xlabel("Sample")
+    # plt.ylabel("Amplitude")
+    # plt.grid(True)
+    # plt.show()
+    
     return rx_waveform, pulse_windows
 
 
-def build_data_cube(rx_waveform, pulse_starts, pri_samples, Nrange, dec):
+def build_data_cube(rx_waveform, pulse_windows):
     """
-    Build data cube from received waveform.
-    
+    Build data cube from concatenated FPGA-style RX waveform buffer.
+
     Parameters
     ----------
     rx_waveform : ndarray
-        Received waveform
-    pulse_starts : list
-        Sample indices where pulses start
-    pri_samples : list
-        Number of samples per PRI
-    Nrange : int
-        Number of range samples
-    dec : int
-        Decimation factor
-        
+        Concatenated RX waveform from simulate_rx_waveform
+    pulse_windows : list of dicts
+        Metadata from simulate_rx_waveform
+    debug : bool
+        If True, prints debug info
+
     Returns
     -------
-    tuple : (data_cube, max_samples)
+    data_cube : ndarray
+        Shape (num_pulses, Nrange), ready for range FFT
+    max_samples : int
+        Maximum RX window length used
     """
-    data_cube = np.zeros((len(pulse_starts), max(pri_samples)), dtype=complex)
-    
-    for i, start in enumerate(pulse_starts):
-        end = start + pri_samples[i]
-        data_cube[i, :pri_samples[i]] = rx_waveform[start:end]
-        
-    return data_cube, max(pri_samples)
+    Nrange = max([w['rx_len'] for w in pulse_windows])
+    num_pulses = len(pulse_windows)
+    # Maximum RX window length
+    rx_lengths = [w['rx_len'] for w in pulse_windows]
+    max_rx_len = max(rx_lengths)
+    # Clip to Nrange
+    max_samples = min(max_rx_len, Nrange)
+
+    # Allocate data cube
+    data_cube = np.zeros((num_pulses, max_samples), dtype=complex)
+
+    for i, win in enumerate(pulse_windows):
+        buf_start = win['rx_buffer_start']
+        rx_len = win['rx_len']
+        rx_segment = rx_waveform[buf_start:buf_start + rx_len]
+
+        # Clip/pad to Nrange
+        L = min(len(rx_segment), Nrange)
+        data_cube[i, :L] = rx_segment[:L]
+
+        # ---- DEBUG data cube
+        # echo_idx = np.where(np.abs(rx_segment) > 0)[0]
+        # print(f"Pulse {i}: RX_len={rx_len}, n_samples in cube={L}, echo indices={echo_idx}")
+
+    return data_cube, max_samples
 
 
-def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, Nrange, dec):
+def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, dec):
     """
     Process range-Doppler maps per PRI group.
     
@@ -152,8 +222,6 @@ def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, Nrange,
         Speed of light [m/s]
     fc : float
         Carrier frequency [Hz]
-    Nrange : int
-        Number of range samples
     dec : int
         Decimation factor
         
@@ -176,16 +244,40 @@ def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, Nrange,
         # Matched filter at decimated rate
         mf_nfft = group_data_dec.shape[1]
         pulse_dec = pulse[::dec]
-        matched_filter = np.fft.fft(np.conj(pulse_dec[::-1]), n=mf_nfft)
-        # matched_filter = np.conj(pulse_dec[::-1])
+        # ---- IFFT MF
+        # matched_filter = np.fft.fft(np.conj(pulse_dec[::-1]), n=mf_nfft)
+        # ---- CONV MF
+        matched_filter = np.conj(pulse_dec[::-1])
         
         # Range compression
-        compressed_dec = np.zeros((doppler_N, mf_nfft), dtype=complex)
+        # ---- IFFT allocate range compression
+        # compressed_dec = np.zeros((doppler_N, mf_nfft), dtype=complex)
+        # ---- CONV allocate range compression
         # compressed_dec = np.zeros((doppler_N, len(matched_filter)+len(group_data_dec[1, :])-1), dtype=complex)
+        compressed_dec = np.zeros((doppler_N, mf_nfft), dtype=complex)
         for i in range(doppler_N):
-            compressed_dec[i, :] = np.fft.ifft(np.fft.fft(group_data_dec[i, :]) * matched_filter)
-            # compressed_dec[i, :] = np.convolve(group_data_dec[i, :],matched_filter,mode='full')
-        compressed_dec = np.roll(compressed_dec, -(len(pulse_dec)-1), axis=1)
+            # ---- IFFT range compression
+            # compressed_dec[i, :] = np.fft.ifft(np.fft.fft(group_data_dec[i, :]) * matched_filter)
+            # ---- CONV range compression
+            compressed_dec[i, :] = np.convolve(group_data_dec[i, :], matched_filter, mode='same')
+        # Match filter alignment
+        # compressed_dec = np.roll(compressed_dec, -(len(pulse_dec)-1), axis=1) 
+        
+        # ---- DEBUG MAP FOR ELI FW
+        # max_val = np.max(np.abs(compressed_dec))
+        # if max_val == 0:
+        #     scale = 1.0
+        # else:
+        #     scale = 2047 / max_val
+       
+        # compressed_dec_scaled = compressed_dec * scale
+        # I = np.real(compressed_dec_scaled)
+        # Q = np.imag(compressed_dec_scaled)
+        # I_q = np.round(I).astype(np.int16)
+        # Q_q = np.round(Q).astype(np.int16)
+        # I_q = np.clip(I_q, -2048, 2047)
+        # Q_q = np.clip(Q_q, -2048, 2047)
+           
         
         # Doppler FFT
         fft_data = np.fft.fftshift(np.fft.fft(compressed_dec, axis=0), axes=0)
@@ -200,5 +292,26 @@ def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, Nrange,
             'doppler_velocity': doppler_velocity,
             'range_vector': range_vector
         }
+        
+        
+        # ---- DEBUG RD_maps
+        # import matplotlib.pyplot as plt
+
+        # num_doppler_bins, num_range_bins = fft_db.shape
+        
+        # # Doppler bin axis centered around 0
+        # doppler_bins = np.arange(-num_doppler_bins // 2, num_doppler_bins // 2)
+        # range_bins = np.arange(num_range_bins)
+        
+        # plt.imshow(
+        #     fft_db.T,
+        #     aspect='auto',
+        #     cmap='jet',
+        #     origin='lower',
+        #     vmin=np.max(fft_db) - 50,
+        #     vmax=np.max(fft_db),
+        #     extent=[doppler_bins[0], doppler_bins[-1],
+        #             range_bins[0], range_bins[-1]]
+        # )
      
     return RD_maps
