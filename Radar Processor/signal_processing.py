@@ -264,9 +264,9 @@ def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, dec):
             compressed_dec[i, :] = np.convolve(group_data_dec[i, :], matched_filter, mode='full')
         
         # Match filter alignment (depending on conv mode)
-        compressed_dec = np.roll(compressed_dec, 1, axis=1) 
+        # compressed_dec = np.roll(compressed_dec, 1, axis=1) 
         
-        # ---- DEBUG DATA CUBE FOR ELI
+        # # ---- DEBUG DATA CUBE FOR ELI
         # max_val = np.max(np.abs(group_data_dec))
         # if max_val == 0:
         #     scale = 1.0
@@ -279,7 +279,20 @@ def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, dec):
         # I_q = np.round(I).astype(np.int16)
         # Q_q = np.round(Q).astype(np.int16)
         # I_q = np.clip(I_q, -2048, 2047)
-        # Q_q = np.clip(Q_q, -2048, 2047)
+        # Q_q = np.clip(Q_q, -2048, 2047) 
+        # Cha_i = I_q.reshape(-1)
+        # Cha_q = Q_q.reshape(-1)
+        
+        # Chb_i = Cha_i
+        # Chb_q = Cha_q
+        
+        # Chc_i = Cha_i
+        # Chc_q = Cha_q
+        
+        # Chd_i = Cha_i
+        # Chd_q = Cha_q
+        
+        # np.savetxt("Cha_iq,Chb_iq,Chc_iq,Chd_iq.txt", np.column_stack((Cha_i, Cha_q, Chb_i, Chb_q, Chc_i, Chc_q, Chd_i, Chd_q)), delimiter=" ", fmt="%d")
         
         # Doppler FFT
         fft_data = np.fft.fftshift(np.fft.fft(compressed_dec, axis=0), axes=0)
@@ -315,5 +328,19 @@ def process_range_doppler(data_cube, PRIs, pri_groups, pulse, fs, c, fc, dec):
         #     extent=[doppler_bins[0], doppler_bins[-1],
         #             range_bins[0], range_bins[-1]]
         # )
-     
+    
+        # ---- DEBUG RDM FOR ELI
+        # max_val = np.max(np.abs(fft_db))
+        # if max_val == 0:
+        #     scale = 1.0
+        # else:
+        #     scale = 2047 / max_val
+       
+        # fft_db_scaled = fft_db * scale
+        # rdm = np.real(fft_db_scaled)
+        # rdm_q = np.round(rdm).astype(np.int16)
+        # rdm_q = np.clip(rdm_q, -2048, 2047)
+        # Cha_rdm = rdm_q.reshape(-1)
+        # np.savetxt("Cha_fft_db.txt", np.column_stack(Cha_rdm), delimiter=" ", fmt="%d")
+        
     return RD_maps
